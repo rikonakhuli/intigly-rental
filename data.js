@@ -1,0 +1,87 @@
+// Seed listings for the prototype. Dummy data, realistic localities and coordinates.
+// Contact details are never stored or shown on listings.
+// Fields: id, title, city, locality, lat, lng, rent (INR/month), bhk, bathrooms, area_sqm, balcony, furnishing, description
+const SEED_LISTINGS = [
+  // Bangalore
+  { id: "BLR-01", title: "Sunny 2 BHK near 100ft Road", city: "Bangalore", locality: "Indiranagar", lat: 12.9784, lng: 77.6408, rent: 42000, bhk: "2", bathrooms: 2, area_sqm: 95, balcony: true, furnishing: "Semi-furnished", description: "Bright corner flat, 5 minute walk to the metro. Covered parking for one car. Water supply is 24x7." },
+  { id: "BLR-02", title: "Quiet 1 BHK, walk to 5th Block", city: "Bangalore", locality: "Koramangala", lat: 12.9352, lng: 77.6245, rent: 22000, bhk: "1", bathrooms: 1, area_sqm: 48, balcony: false, furnishing: "Unfurnished", description: "Ground floor unit in a quiet lane. Close to cafes and the Forum mall side." },
+  { id: "BLR-03", title: "Spacious 3 BHK with balcony, Sector 2", city: "Bangalore", locality: "HSR Layout", lat: 12.9116, lng: 77.6389, rent: 48000, bhk: "3", bathrooms: 3, area_sqm: 140, balcony: true, furnishing: "Unfurnished", description: "Family flat on the 4th floor with lift. Two balconies facing the park." },
+  { id: "BLR-04", title: "Modern 2 BHK on ITPL road", city: "Bangalore", locality: "Whitefield", lat: 12.9698, lng: 77.7500, rent: 35000, bhk: "2", bathrooms: 2, area_sqm: 102, balcony: true, furnishing: "Fully furnished", description: "Ready to move in, fully furnished with AC in both rooms. Gated community with a gym." },
+  { id: "BLR-05", title: "Bright 1 BHK in 4th Block", city: "Bangalore", locality: "Jayanagar", lat: 12.9250, lng: 77.5938, rent: 19000, bhk: "1", bathrooms: 1, area_sqm: 45, balcony: true, furnishing: "Unfurnished", description: "Old building, well maintained. Near the Jayanagar shopping complex and buses." },
+  { id: "BLR-06", title: "Family 2 BHK, Malleshwaram 8th Cross", city: "Bangalore", locality: "Malleshwaram", lat: 13.0035, lng: 77.5647, rent: 30000, bhk: "2", bathrooms: 2, area_sqm: 90, balcony: false, furnishing: "Semi-furnished", description: "Independent building flat, quiet street. Walkable to the market and temple." },
+  { id: "BLR-07", title: "1.5 BHK near Electronic City Phase 1", city: "Bangalore", locality: "Electronic City", lat: 12.8399, lng: 77.6770, rent: 19500, bhk: "1.5", bathrooms: 1, area_sqm: 70, balcony: true, furnishing: "Unfurnished", description: "Extra study room that works as a half bedroom. Shuttle stop nearby." },
+  { id: "BLR-08", title: "Large 3 BHK near Hebbal lake", city: "Bangalore", locality: "Hebbal", lat: 13.0358, lng: 77.5970, rent: 52000, bhk: "3", bathrooms: 3, area_sqm: 160, balcony: true, furnishing: "Unfurnished", description: "Big rooms, cross ventilation, lake view from the balcony. Needs 2 months deposit." },
+  { id: "BLR-09", title: "Fully furnished 1 BHK in Bellandur", city: "Bangalore", locality: "Bellandur", lat: 12.9260, lng: 77.6762, rent: 21000, bhk: "1", bathrooms: 1, area_sqm: 50, balcony: false, furnishing: "Fully furnished", description: "Ready to move, good for single professionals. Close to the ORR shuttle points." },
+  { id: "BLR-10", title: "2 BHK in JP Nagar 7th Phase", city: "Bangalore", locality: "JP Nagar", lat: 12.9063, lng: 77.5857, rent: 27000, bhk: "2", bathrooms: 2, area_sqm: 88, balcony: true, furnishing: "Semi-furnished", description: "Modular kitchen, geyser in both bathrooms. Near the metro and a large park." },
+  { id: "BLR-11", title: "Compact 1 BHK near Marathahalli bridge", city: "Bangalore", locality: "Marathahalli", lat: 12.9591, lng: 77.6974, rent: 17000, bhk: "1", bathrooms: 1, area_sqm: 42, balcony: false, furnishing: "Unfurnished", description: "Budget friendly, good for a first home. Auto and bus access on the main road." },
+  { id: "BLR-12", title: "3 BHK with garden side, Yelahanka", city: "Bangalore", locality: "Yelahanka", lat: 13.1005, lng: 77.5963, rent: 26000, bhk: "3", bathrooms: 3, area_sqm: 135, balcony: true, furnishing: "Unfurnished", description: "Spacious layout, two covered parking spots. Good for families near the airport side." },
+  { id: "BLR-13", title: "2.5 BHK near Ulsoor lake", city: "Bangalore", locality: "Ulsoor", lat: 12.9822, lng: 77.6200, rent: 38000, bhk: "2.5", bathrooms: 2, area_sqm: 115, balcony: true, furnishing: "Semi-furnished", description: "Study room plus two bedrooms. Walk to the lake and the MG Road metro." },
+  { id: "BLR-14", title: "1 BHK on Sarjapur Road", city: "Bangalore", locality: "Sarjapur", lat: 12.9010, lng: 77.6870, rent: 16500, bhk: "1", bathrooms: 1, area_sqm: 40, balcony: false, furnishing: "Unfurnished", description: "Near the tech parks shuttle route. Gated building with security." },
+  { id: "BLR-15", title: "2 BHK in Basavanagudi", city: "Bangalore", locality: "Basavanagudi", lat: 12.9422, lng: 77.5735, rent: 24000, bhk: "2", bathrooms: 2, area_sqm: 84, balcony: false, furnishing: "Semi-furnished", description: "Old style house with a small courtyard. Near the Bull Temple and local market." },
+
+  // Mumbai
+  { id: "MUM-01", title: "Sea-facing 2 BHK, Bandra West", city: "Mumbai", locality: "Bandra West", lat: 19.0596, lng: 72.8295, rent: 165000, bhk: "2", bathrooms: 2, area_sqm: 92, balcony: true, furnishing: "Fully furnished", description: "Balcony with a sea view. Fully furnished with a dishwasher and washing machine." },
+  { id: "MUM-02", title: "1 BHK near Lokhandwala", city: "Mumbai", locality: "Andheri West", lat: 19.1364, lng: 72.8296, rent: 60000, bhk: "1", bathrooms: 1, area_sqm: 55, balcony: true, furnishing: "Semi-furnished", description: "Second floor, lift in building. Short walk to the Andheri station auto stand." },
+  { id: "MUM-03", title: "2 BHK with lake view, Powai", city: "Mumbai", locality: "Powai", lat: 19.1176, lng: 72.9060, rent: 85000, bhk: "2", bathrooms: 2, area_sqm: 96, balcony: true, furnishing: "Unfurnished", description: "Lake facing flat in a society with a pool and gym. Near the IIT and the tech offices." },
+  { id: "MUM-04", title: "1 BHK a short walk to Juhu beach", city: "Mumbai", locality: "Juhu", lat: 19.1075, lng: 72.8263, rent: 75000, bhk: "1", bathrooms: 1, area_sqm: 60, balcony: false, furnishing: "Semi-furnished", description: "Quiet lane, close to the beach and the Juhu market. Good for a single professional." },
+  { id: "MUM-05", title: "1.5 BHK in Goregaon East", city: "Mumbai", locality: "Goregaon East", lat: 19.1663, lng: 72.8526, rent: 52000, bhk: "1.5", bathrooms: 1, area_sqm: 68, balcony: true, furnishing: "Unfurnished", description: "Extra room that can be used as a study or guest room. Near the film studios and the highway." },
+  { id: "MUM-06", title: "2 BHK in Malad West", city: "Mumbai", locality: "Malad West", lat: 19.1868, lng: 72.8350, rent: 48000, bhk: "2", bathrooms: 2, area_sqm: 85, balcony: false, furnishing: "Unfurnished", description: "Near Mindspace and the Malad station. Two parking slots available." },
+  { id: "MUM-07", title: "1 BHK near Chembur monorail", city: "Mumbai", locality: "Chembur", lat: 19.0522, lng: 72.9005, rent: 44000, bhk: "1", bathrooms: 1, area_sqm: 52, balcony: true, furnishing: "Unfurnished", description: "Walk to the monorail station. Good for commuters to BKC and Lower Parel." },
+  { id: "MUM-08", title: "2 BHK in Lower Parel", city: "Mumbai", locality: "Lower Parel", lat: 18.9980, lng: 72.8300, rent: 110000, bhk: "2", bathrooms: 2, area_sqm: 90, balcony: false, furnishing: "Fully furnished", description: "Walk to the mall and office towers. Modular kitchen, AC in both rooms." },
+  { id: "MUM-09", title: "1 BHK in Dadar West", city: "Mumbai", locality: "Dadar", lat: 19.0178, lng: 72.8478, rent: 62000, bhk: "1", bathrooms: 1, area_sqm: 47, balcony: false, furnishing: "Semi-furnished", description: "Close to Dadar station and the flower market. Easy access to Central and Western lines." },
+  { id: "MUM-10", title: "3 BHK in Kandivali East", city: "Mumbai", locality: "Kandivali East", lat: 19.2094, lng: 72.8630, rent: 70000, bhk: "3", bathrooms: 3, area_sqm: 130, balcony: true, furnishing: "Unfurnished", description: "Large family flat, good ventilation. Near the Thakur village and the station." },
+  { id: "MUM-11", title: "1 BHK in Vile Parle East", city: "Mumbai", locality: "Vile Parle", lat: 19.1000, lng: 72.8400, rent: 58000, bhk: "1", bathrooms: 1, area_sqm: 50, balcony: true, furnishing: "Semi-furnished", description: "Quiet building, close to the domestic airport and the Vile Parle station." },
+  { id: "MUM-12", title: "2 BHK near Ghatkopar station", city: "Mumbai", locality: "Ghatkopar", lat: 19.0860, lng: 72.9081, rent: 45000, bhk: "2", bathrooms: 2, area_sqm: 80, balcony: false, furnishing: "Unfurnished", description: "Five minutes from the station. Good for those who commute to BKC." },
+  { id: "MUM-13", title: "2 BHK in Mulund West near the lake", city: "Mumbai", locality: "Mulund", lat: 19.1726, lng: 72.9560, rent: 40000, bhk: "2", bathrooms: 2, area_sqm: 88, balcony: true, furnishing: "Unfurnished", description: "Calm area with a park and a lake walk. Good for families." },
+  { id: "MUM-14", title: "1 BHK at Worli Seaface", city: "Mumbai", locality: "Worli", lat: 19.0176, lng: 72.8160, rent: 120000, bhk: "1", bathrooms: 1, area_sqm: 65, balcony: true, furnishing: "Fully furnished", description: "Sea-facing balcony, fully furnished. Walk to the Worli Sea Face promenade." },
+  { id: "MUM-15", title: "2.5 BHK in Borivali West", city: "Mumbai", locality: "Borivali", lat: 19.2307, lng: 72.8567, rent: 55000, bhk: "2.5", bathrooms: 2, area_sqm: 100, balcony: true, furnishing: "Semi-furnished", description: "Extra study room and two balconies. Close to the national park gate side." },
+
+  // Delhi (coords are approximate locality centres)
+  { id: "DEL-01", title: "2 BHK near Connaught Place", city: "Delhi", locality: "Connaught Place", lat: 28.6315, lng: 77.2167, rent: 55000, bhk: "2", bathrooms: 2, area_sqm: 100, balcony: true, furnishing: "Semi-furnished", description: "Central location, walk to the Rajiv Chowk metro. Good for office commuters. Lift in building." },
+  { id: "DEL-02", title: "3 BHK in Saket, near Select Citywalk", city: "Delhi", locality: "Saket", lat: 28.5244, lng: 77.2066, rent: 60000, bhk: "3", bathrooms: 3, area_sqm: 150, balcony: true, furnishing: "Unfurnished", description: "Family flat in a society with a park. Two covered parking slots. Walk to the Saket metro." },
+  { id: "DEL-03", title: "2 BHK in Dwarka Sector 10", city: "Delhi", locality: "Dwarka", lat: 28.5823, lng: 77.0461, rent: 28000, bhk: "2", bathrooms: 2, area_sqm: 95, balcony: true, furnishing: "Semi-furnished", description: "Near the Dwarka Sector 10 metro station. Wide roads and a large park nearby." },
+  { id: "DEL-04", title: "1 BHK in Lajpat Nagar", city: "Delhi", locality: "Lajpat Nagar", lat: 28.5677, lng: 77.2433, rent: 24000, bhk: "1", bathrooms: 1, area_sqm: 50, balcony: false, furnishing: "Unfurnished", description: "Ground floor unit in a market area. Auto and bus stop within a short walk." },
+  { id: "DEL-05", title: "3 BHK with balcony, Rohini Sector 9", city: "Delhi", locality: "Rohini", lat: 28.7320, lng: 77.1170, rent: 32000, bhk: "3", bathrooms: 2, area_sqm: 135, balcony: true, furnishing: "Unfurnished", description: "Independent floor with terrace access. Close to the Rohini metro and the schools." },
+  { id: "DEL-06", title: "2 BHK near Karol Bagh market", city: "Delhi", locality: "Karol Bagh", lat: 28.6514, lng: 77.1907, rent: 38000, bhk: "2", bathrooms: 2, area_sqm: 90, balcony: false, furnishing: "Semi-furnished", description: "Walk to the Karol Bagh metro and the market. Good for business owners nearby." },
+  { id: "DEL-07", title: "1.5 BHK in Greater Kailash 2", city: "Delhi", locality: "Greater Kailash", lat: 28.5393, lng: 77.2435, rent: 42000, bhk: "1.5", bathrooms: 1, area_sqm: 70, balcony: true, furnishing: "Fully furnished", description: "Extra study room, fully furnished with AC. Near the M-block market." },
+  { id: "DEL-08", title: "2 BHK in Vasant Kunj", city: "Delhi", locality: "Vasant Kunj", lat: 28.5235, lng: 77.1560, rent: 45000, bhk: "2", bathrooms: 2, area_sqm: 110, balcony: true, furnishing: "Semi-furnished", description: "Quiet residential area near the malls and the Vasant Kunj shopping complex." },
+  { id: "DEL-09", title: "2 BHK in Pitampura", city: "Delhi", locality: "Pitampura", lat: 28.7000, lng: 77.1310, rent: 30000, bhk: "2", bathrooms: 2, area_sqm: 92, balcony: false, furnishing: "Unfurnished", description: "Close to the Pitampura metro and the local markets. Water supply is 24x7." },
+  { id: "DEL-10", title: "1 BHK near Hauz Khas village", city: "Delhi", locality: "Hauz Khas", lat: 28.5494, lng: 77.2001, rent: 35000, bhk: "1", bathrooms: 1, area_sqm: 55, balcony: true, furnishing: "Fully furnished", description: "Walk to the Hauz Khas village cafes and the lake. Good for single professionals." },
+
+  // Kolkata (coords are approximate locality centres)
+  { id: "KOL-01", title: "2 BHK in Salt Lake Sector V", city: "Kolkata", locality: "Salt Lake", lat: 22.5726, lng: 88.4339, rent: 22000, bhk: "2", bathrooms: 2, area_sqm: 100, balcony: true, furnishing: "Semi-furnished", description: "IT hub area, close to the tech offices. Gated complex with a gym and lift." },
+  { id: "KOL-02", title: "1 BHK near Park Street", city: "Kolkata", locality: "Park Street", lat: 22.5528, lng: 88.3529, rent: 18000, bhk: "1", bathrooms: 1, area_sqm: 48, balcony: false, furnishing: "Unfurnished", description: "Walk to the metro and the restaurants. Older building, well ventilated." },
+  { id: "KOL-03", title: "2 BHK in Ballygunge", city: "Kolkata", locality: "Ballygunge", lat: 22.5230, lng: 88.3660, rent: 26000, bhk: "2", bathrooms: 2, area_sqm: 96, balcony: true, furnishing: "Semi-furnished", description: "Quiet lane near the Ballygunge Phari market. Good for families." },
+  { id: "KOL-04", title: "3 BHK in New Town Action Area 1", city: "Kolkata", locality: "New Town", lat: 22.5836, lng: 88.4795, rent: 30000, bhk: "3", bathrooms: 3, area_sqm: 145, balcony: true, furnishing: "Unfurnished", description: "Planned township with wide roads. Two covered parking spots and a lift." },
+  { id: "KOL-05", title: "2 BHK near Howrah station", city: "Kolkata", locality: "Howrah", lat: 22.5839, lng: 88.3424, rent: 14000, bhk: "2", bathrooms: 1, area_sqm: 75, balcony: false, furnishing: "Unfurnished", description: "Five minutes from the station. Budget friendly for commuters." },
+  { id: "KOL-06", title: "2 BHK in Behala", city: "Kolkata", locality: "Behala", lat: 22.4990, lng: 88.3160, rent: 15000, bhk: "2", bathrooms: 2, area_sqm: 85, balcony: true, furnishing: "Semi-furnished", description: "Near the Behala Chowrasta and the bus routes. Flat has a small balcony." },
+  { id: "KOL-07", title: "1 BHK in Gariahat", city: "Kolkata", locality: "Gariahat", lat: 22.5187, lng: 88.3643, rent: 16000, bhk: "1", bathrooms: 1, area_sqm: 45, balcony: false, furnishing: "Unfurnished", description: "Walk to the Gariahat market and the metro. Good for a first home." },
+  { id: "KOL-08", title: "2 BHK near Jadavpur University", city: "Kolkata", locality: "Jadavpur", lat: 22.4990, lng: 88.3710, rent: 17000, bhk: "2", bathrooms: 2, area_sqm: 80, balcony: true, furnishing: "Semi-furnished", description: "Close to the university and the bus stand. Good for students and faculty." },
+  { id: "KOL-09", title: "2.5 BHK in Tollygunge", city: "Kolkata", locality: "Tollygunge", lat: 22.4990, lng: 88.3493, rent: 24000, bhk: "2.5", bathrooms: 2, area_sqm: 110, balcony: true, furnishing: "Semi-furnished", description: "Extra study room and two balconies. Near the metro and the club road." },
+  { id: "KOL-10", title: "3 BHK in Rajarhat", city: "Kolkata", locality: "Rajarhat", lat: 22.6230, lng: 88.4500, rent: 28000, bhk: "3", bathrooms: 3, area_sqm: 140, balcony: true, furnishing: "Unfurnished", description: "New housing complex near the tech parks. Covered parking and a community pool." }
+];
+
+// Landmarks for offline search. Localities are added automatically from the seed.
+const LANDMARKS = [
+  { name: "MG Road", city: "Bangalore", lat: 12.9757, lng: 77.6066 },
+  { name: "Cubbon Park", city: "Bangalore", lat: 12.9763, lng: 77.6083 },
+  { name: "Bangalore Airport", city: "Bangalore", lat: 13.1986, lng: 77.7066 },
+  { name: "Manyata Tech Park", city: "Bangalore", lat: 13.0456, lng: 77.6209 },
+  { name: "Bandra Kurla Complex", city: "Mumbai", lat: 19.0656, lng: 72.8697 },
+  { name: "Chhatrapati Shivaji Airport", city: "Mumbai", lat: 19.0896, lng: 72.8656 },
+  { name: "Churchgate station", city: "Mumbai", lat: 18.9322, lng: 72.8264 },
+  { name: "Andheri station", city: "Mumbai", lat: 19.1197, lng: 72.8464 },
+  { name: "Connaught Place", city: "Delhi", lat: 28.6315, lng: 77.2167 },
+  { name: "IGI Airport", city: "Delhi", lat: 28.5562, lng: 77.1000 },
+  { name: "New Delhi station", city: "Delhi", lat: 28.6419, lng: 77.2195 },
+  { name: "Park Street", city: "Kolkata", lat: 22.5528, lng: 88.3529 },
+  { name: "Netaji Subhas Chandra Bose Airport", city: "Kolkata", lat: 22.6547, lng: 88.4467 },
+  { name: "Sealdah station", city: "Kolkata", lat: 22.5677, lng: 88.3711 }
+];
+
+const CITY_CENTERS = {
+  Bangalore: { lat: 12.9716, lng: 77.5946 },
+  Mumbai: { lat: 19.0760, lng: 72.8777 },
+  Delhi: { lat: 28.6139, lng: 77.2090 },
+  Kolkata: { lat: 22.5726, lng: 88.3639 }
+};
