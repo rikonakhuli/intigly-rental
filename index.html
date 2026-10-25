@@ -2,187 +2,278 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f766e" />
   <title>Rental Map</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Rental Map</div>
-    <div class="city-switch" role="group" aria-label="City">
-      <button class="city-btn active" data-city="Bangalore">Bangalore</button>
-      <button class="city-btn" data-city="Mumbai">Mumbai</button>
-      <button class="city-btn" data-city="Delhi">Delhi</button>
-      <button class="city-btn" data-city="Kolkata">Kolkata</button>
-    </div>
+    <div class="brand">Rental<span>Map</span></div>
+    <nav class="city-switch" role="group" aria-label="City">
+      <button class="city-btn active" data-city="Bangalore">BLR</button>
+      <button class="city-btn" data-city="Mumbai">BOM</button>
+      <button class="city-btn" data-city="Delhi">DEL</button>
+      <button class="city-btn" data-city="Kolkata">CCU</button>
+    </nav>
     <div id="accountArea" class="account"></div>
   </header>
 
-  <div class="searchwrap">
+  <div class="finder">
     <div class="searchbar">
-      <input id="searchInput" type="search" placeholder="Search a locality, landmark or area" autocomplete="off" aria-label="Search location" />
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <input id="searchInput" type="search" placeholder="Search area or landmark" autocomplete="off" aria-label="Search area or landmark" />
+      <button id="locBtn" class="icon-btn" title="Use my location" aria-label="Use my location">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
       <ul id="suggest" class="suggest" hidden role="listbox"></ul>
-      <button id="searchBtn" class="btn">Go</button>
-      <button id="locBtn" class="btn ghost" title="Use my location">Near me</button>
     </div>
+    <div class="chips" id="filters">
+      <select id="bhkFilter" class="chip" aria-label="BHK">
+        <option value="">BHK: any</option>
+        <option value="1RK">1 RK</option>
+        <option value="1">1 BHK</option>
+        <option value="1.5">1.5 BHK</option>
+        <option value="2">2 BHK</option>
+        <option value="2.5">2.5 BHK</option>
+        <option value="3">3+ BHK</option>
+      </select>
+      <select id="rentFilter" class="chip" aria-label="Budget">
+        <option value="">Budget: any</option>
+        <option value="0:15000">Under ₹15k</option>
+        <option value="0:25000">Under ₹25k</option>
+        <option value="0:50000">Under ₹50k</option>
+        <option value="0:100000">Under ₹1L</option>
+        <option value="100000:">₹1L and above</option>
+      </select>
+      <select id="furnFilter" class="chip" aria-label="Furnishing">
+        <option value="">Furnishing: any</option>
+        <option value="Unfurnished">Unfurnished</option>
+        <option value="Semi-furnished">Semi-furnished</option>
+        <option value="Fully furnished">Fully furnished</option>
+      </select>
+      <select id="balconyFilter" class="chip" aria-label="Balcony">
+        <option value="">Balcony: any</option>
+        <option value="yes">With balcony</option>
+        <option value="no">No balcony</option>
+      </select>
+      <label class="chip toggle"><input type="checkbox" id="verifiedFilter" /> Verified only</label>
+      <select id="sortSelect" class="chip" aria-label="Sort">
+        <option value="nearest">Sort: nearest</option>
+        <option value="rent_asc">Rent low to high</option>
+        <option value="rent_desc">Rent high to low</option>
+      </select>
+    </div>
+    <div class="status-row">
+      <span id="countLabel" class="count"></span>
+      <button id="resetFilters" class="link-btn" hidden>Clear filters</button>
+    </div>
+    <div id="notice" class="notice" hidden></div>
   </div>
-  <div class="filters">
-    <select id="sortSelect" aria-label="Sort">
-      <option value="nearest">Nearest first</option>
-      <option value="rent_asc">Rent low to high</option>
-      <option value="rent_desc">Rent high to low</option>
-    </select>
-    <select id="bhkFilter" aria-label="BHK">
-      <option value="">Any BHK</option>
-      <option value="1">1 BHK</option>
-      <option value="1.5">1.5 BHK</option>
-      <option value="2">2 BHK</option>
-      <option value="2.5">2.5 BHK</option>
-      <option value="3">3+ BHK</option>
-    </select>
-    <select id="rentFilter" aria-label="Max rent">
-      <option value="">Any rent</option>
-      <option value="25000">Up to ₹25k</option>
-      <option value="50000">Up to ₹50k</option>
-      <option value="100000">Up to ₹1L</option>
-    </select>
-    <label class="chk"><input type="checkbox" id="balconyFilter" /> Balcony</label>
-    <span id="countLabel" class="count"></span>
-  </div>
-  <div id="notice" class="notice" hidden></div>
 
   <main class="layout">
     <div id="map" aria-label="Map of rental listings"></div>
     <section id="cardList" class="cards" aria-label="Listings"></section>
   </main>
 
-  <!-- Listing detail -->
-  <div id="detailView" class="view" hidden>
-    <div class="view-inner">
-      <button class="back" data-close="detailView">← Back to map</button>
-      <div id="detailBody"></div>
+  <!-- Listing details: full sheet -->
+  <div id="detailView" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+    <div class="sheet-bar">
+      <button class="icon-btn" data-close="detailView" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="sheet-bar-title">Listing</span>
     </div>
+    <div id="detailBody" class="sheet-body"></div>
   </div>
 
-  <!-- Auth (login / signup, both roles) -->
-  <div id="authView" class="view" hidden>
-    <div class="view-inner narrow">
-      <button class="back" data-close="authView">← Back</button>
-      <h2 id="authTitle">Log in</h2>
+  <!-- Login gate for the owner contact (opens from View number / Call owner) -->
+  <div id="authView" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <div class="modal-card">
+      <button class="icon-btn modal-x" data-close="authView" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="gate-badge">10 free call credits included</div>
+      <h2 id="authTitle">Login to view owner's contact</h2>
+      <p class="muted" id="authSub">Create a free account in seconds. Renters get 10 free call credits, one credit per owner contact.</p>
       <form id="authForm" novalidate>
-        <label>Email <input name="email" type="email" required /></label>
-        <label>Password (8+ characters) <input name="password" type="password" minlength="8" required /></label>
+        <label>Email <input name="email" type="email" required autocomplete="email" /></label>
+        <label>Password <span class="hint">8+ characters</span><input name="password" type="password" minlength="8" required autocomplete="current-password" /></label>
         <div id="signupFields" hidden>
-          <label>Name <input name="name" maxlength="60" /></label>
-          <label>Phone (shared with renters who unlock a call) <input name="phone" type="tel" maxlength="20" placeholder="+91 98xxxxxxxx" /></label>
-          <label>I am a
-            <select name="role">
-              <option value="renter">Renter (looking for a place)</option>
-              <option value="owner">Owner (posting my own place)</option>
-            </select>
-          </label>
+          <label>Your name <input name="name" maxlength="60" autocomplete="name" /></label>
+          <label>Mobile number <span class="hint" id="phoneHint">Renters use this to unlock owner contacts</span><input name="phone" type="tel" maxlength="20" placeholder="+91 98xxxxxxxx" autocomplete="tel" /></label>
+          <fieldset class="role-pick">
+            <legend>I am</legend>
+            <label class="radio"><input type="radio" name="role" value="renter" checked /> Looking to rent</label>
+            <label class="radio"><input type="radio" name="role" value="owner" /> The owner of a property</label>
+          </fieldset>
         </div>
         <p id="authError" class="error" hidden></p>
-        <button type="submit" class="btn primary wide" id="authSubmit">Log in</button>
+        <button type="submit" class="btn primary wide" id="authSubmit">Continue</button>
       </form>
-      <button id="authSwitch" class="btn ghost wide">Create an account instead</button>
+      <button id="authSwitch" class="btn text wide">New here? Create a free account</button>
     </div>
   </div>
 
   <!-- Buy credits (renters) -->
-  <div id="creditsView" class="view" hidden>
-    <div class="view-inner narrow">
-      <button class="back" data-close="creditsView">← Back</button>
+  <div id="creditsView" class="sheet" hidden role="dialog" aria-modal="true">
+    <div class="sheet-bar">
+      <button class="icon-btn" data-close="creditsView" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="sheet-bar-title">Call credits</span>
+    </div>
+    <div class="sheet-body narrow">
       <h2>Buy call credits</h2>
-      <p class="muted">Each call reveal costs 1 credit. Credits cost ₹10 each. Test mode, no real money moves.</p>
+      <p class="muted">Each owner contact costs 1 credit. Calling the same listing again is free. Credits are ₹10 each.</p>
       <div class="pay-card">
         <div class="row"><span>You have</span><strong id="creditsNow">-</strong></div>
         <label>How many credits <input id="creditQty" type="number" min="1" max="100" value="10" /></label>
-        <div class="row"><span>Total</span><strong id="creditsTotal">₹100</strong></div>
+        <div class="row total"><span>Total</span><strong id="creditsTotal">₹100</strong></div>
       </div>
       <button id="creditsPay" class="btn primary wide">Pay with PayU</button>
       <p id="creditsStatus" class="muted small"></p>
     </div>
   </div>
 
-  <!-- Post flow (owners) -->
-  <div id="postView" class="view" hidden>
-    <div class="view-inner">
-      <button class="back" data-close="postView">← Back to map</button>
-      <h2>Post a listing</h2>
-      <p class="muted">Owners only. Brokers and agents are not allowed. Posting costs ₹1,000 (₹1,500 for 1.5 BHK and above). After payment an admin approves it before it goes live.</p>
+  <!-- Post a listing (owners) -->
+  <div id="postView" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="postTitle">
+    <div class="sheet-bar">
+      <button class="icon-btn" data-close="postView" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="sheet-bar-title">List your property</span>
+    </div>
+    <div class="sheet-body">
+      <h2 id="postTitle">Post your property</h2>
+      <p class="muted">For owners only. Brokers and agents are not allowed. Listing fee is 10% of your monthly rent (rent of ₹30,000 means a ₹3,000 fee). Promo code FIRST1000 makes posting free for the first 1,000 listings. An admin reviews the listing after payment.</p>
       <form id="postForm" novalidate>
-        <fieldset>
-          <legend>Basics</legend>
-          <label>Title <span class="req">*</span><input name="title" maxlength="90" placeholder="e.g. Sunny 2 BHK near metro" required /></label>
-          <label>City <span class="req">*</span>
-            <select name="city" required>
-              <option value="">Select city</option>
-              <option>Bangalore</option><option>Mumbai</option><option>Delhi</option><option>Kolkata</option>
-            </select>
+
+        <section class="block">
+          <h3>1. Photos <span class="req">*</span></h3>
+          <p class="muted small">At least 3, up to 8. JPG, PNG or WEBP.</p>
+          <label class="upload">
+            <input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple />
+            <span class="upload-cta">Add photos</span>
           </label>
-          <label>Locality <span class="req">*</span><input name="locality" maxlength="60" placeholder="e.g. Indiranagar" required /></label>
-          <label>Pin the location (tap the map) <span class="req">*</span>
-            <span class="pin-status" id="pinStatus">Not pinned yet. Tap the small map below.</span>
+          <p id="photoNote" class="muted small">No photos selected.</p>
+        </section>
+
+        <section class="block">
+          <h3>2. Video <span class="req">*</span></h3>
+          <p class="muted small">One video of the place, up to 60 seconds. MP4, WEBM or MOV.</p>
+          <label class="upload">
+            <input name="video" type="file" accept="video/mp4,video/webm,video/quicktime" />
+            <span class="upload-cta">Add video</span>
           </label>
+          <p id="videoNote" class="muted small">No video selected.</p>
+        </section>
+
+        <section class="block">
+          <h3>3. Title <span class="req">*</span></h3>
+          <input name="title" maxlength="90" placeholder="e.g. Sunny 2 BHK near metro" required />
+        </section>
+
+        <section class="block">
+          <h3>4. Location <span class="req">*</span></h3>
+          <div class="grid2">
+            <label>City <span class="req">*</span>
+              <select name="city" required>
+                <option value="">Select city</option>
+                <option value="Bangalore">Bangalore (BLR)</option>
+                <option value="Mumbai">Mumbai (BOM)</option>
+                <option value="Delhi">Delhi (DEL)</option>
+                <option value="Kolkata">Kolkata (CCU)</option>
+              </select>
+            </label>
+            <label>Locality <span class="req">*</span><input name="locality" maxlength="60" placeholder="e.g. Indiranagar" required /></label>
+          </div>
+          <div class="pin-head"><span>Drop the pin on your building</span><span id="pinStatus" class="pin-status">Not pinned yet</span></div>
           <div id="pickMap" class="pick-map"></div>
-        </fieldset>
-        <fieldset>
-          <legend>Specs and money</legend>
+        </section>
+
+        <section class="block">
+          <h3>5. Rent and deposit <span class="req">*</span></h3>
+          <div class="grid2">
+            <label>Rent per month (₹) <span class="req">*</span><input name="rent" type="number" min="1000" inputmode="numeric" required /></label>
+            <label>Deposit (₹) <span class="req">*</span><input name="deposit" type="number" min="0" inputmode="numeric" required /></label>
+          </div>
+          <p class="muted small">Enter 0 if there is no deposit.</p>
+        </section>
+
+        <section class="block">
+          <h3>6. Home details <span class="req">*</span></h3>
           <div class="grid2">
             <label>BHK <span class="req">*</span>
               <select name="bhk" required>
                 <option value="">Select</option>
-                <option value="1">1 BHK</option><option value="1.5">1.5 BHK</option><option value="2">2 BHK</option>
-                <option value="2.5">2.5 BHK</option><option value="3">3 BHK</option><option value="4">4+ BHK</option>
+                <option value="1RK">1 RK</option>
+                <option value="1">1 BHK</option>
+                <option value="1.5">1.5 BHK</option>
+                <option value="2">2 BHK</option>
+                <option value="2.5">2.5 BHK</option>
+                <option value="3">3 BHK</option>
+                <option value="3.5">3.5 BHK</option>
+                <option value="4">4 BHK and above</option>
               </select>
             </label>
             <label>Bathrooms <span class="req">*</span>
               <select name="bathrooms" required><option value="">Select</option><option>1</option><option>2</option><option>3</option><option>4</option></select>
             </label>
-            <label>Total area (sq m) <span class="req">*</span><input name="area_sqm" type="number" min="10" max="2000" required /></label>
+            <label>Total area (sq m) <span class="req">*</span><input name="area_sqm" type="number" min="10" max="2000" inputmode="numeric" required /></label>
             <label>Balcony <span class="req">*</span>
               <select name="balcony" required><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option></select>
             </label>
-            <label>Rent per month (₹) <span class="req">*</span><input name="rent" type="number" min="1000" required /></label>
-            <label>Deposit (₹) <span class="req">*</span><input name="deposit" type="number" min="0" required /></label>
-            <label>Furnishing
-              <select name="furnishing"><option>Unfurnished</option><option>Semi-furnished</option><option>Fully furnished</option></select>
+            <label>Furnishing <span class="req">*</span>
+              <select name="furnishing" required>
+                <option value="">Select</option>
+                <option value="Unfurnished">Unfurnished</option>
+                <option value="Semi-furnished">Semi-furnished</option>
+                <option value="Fully furnished">Fully furnished</option>
+              </select>
             </label>
           </div>
-          <label>Description <textarea name="description" rows="3" maxlength="600"></textarea></label>
-        </fieldset>
-        <fieldset>
-          <legend>Media (both required)</legend>
-          <label>Photos <span class="req">*</span> (at least 3, up to 8)<input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple /></label>
-          <p id="photoNote" class="muted small">No photos selected.</p>
-          <label>Video of the place <span class="req">*</span> (1 video, up to 60 seconds)<input name="video" type="file" accept="video/mp4,video/webm,video/quicktime" /></label>
-          <p id="videoNote" class="muted small">No video selected.</p>
-        </fieldset>
-        <fieldset class="declaration">
+          <p id="areaNote" class="muted small"></p>
+          <label>Anything renters should know <span class="hint">optional</span><textarea name="description" rows="3" maxlength="600"></textarea></label>
+        </section>
+
+        <section class="block">
+          <h3>7. Listing fee</h3>
+          <label>Promo code <span class="hint">optional</span><input name="promo_code" type="text" maxlength="40" autocomplete="off" placeholder="FIRST1000" /></label>
+          <p id="feeNote" class="muted small">10% of rent = listing fee</p>
+        </section>
+
+        <section class="block declaration">
           <label class="chk big"><input type="checkbox" name="owner_confirm" required />
-            <span><strong>I confirm I am the owner, no brokers.</strong> I am not a broker or agent. <span class="req">*</span></span>
+            <span><strong>I confirm I am the owner. Brokers not allowed.</strong> I am not a broker or agent. <span class="req">*</span></span>
           </label>
-        </fieldset>
+        </section>
+
         <p id="formError" class="error" hidden></p>
-        <button type="submit" class="btn primary wide">Save and continue to payment</button>
+        <button type="submit" class="btn primary wide" id="postSubmit">Continue to payment</button>
       </form>
       <div id="myListings"></div>
     </div>
   </div>
 
   <!-- Pay to publish (owners) -->
-  <div id="payView" class="view" hidden>
-    <div class="view-inner narrow">
-      <button class="back" data-close="payView">← Back</button>
+  <div id="payView" class="sheet" hidden role="dialog" aria-modal="true">
+    <div class="sheet-bar">
+      <button class="icon-btn" data-close="payView" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="sheet-bar-title">Pay to publish</span>
+    </div>
+    <div class="sheet-body narrow">
       <h2>Pay to publish</h2>
       <div class="pay-card">
         <div class="row"><span id="payTitle"></span></div>
-        <div class="row"><span>Listing fee</span><strong id="payFee"></strong></div>
+        <div class="row total"><span>Listing fee</span><strong id="payFee"></strong></div>
         <p class="muted small">Test mode. On PayU test checkout use test card 5123 4567 8901 2346, any future expiry, CVV 123, OTP 123456 when asked.</p>
       </div>
       <button id="payNow" class="btn primary wide">Pay with PayU</button>
+      <p id="payPromoNote" class="muted small"></p>
       <p id="payStatus" class="muted small"></p>
     </div>
   </div>
@@ -191,7 +282,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="data.js"></script>
-  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

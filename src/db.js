@@ -13,7 +13,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const TABLES = ["users", "sessions", "listings", "media", "orders", "ledger", "reveals"];
+const TABLES = ["users", "sessions", "listings", "media", "orders", "ledger", "reveals", "reviews"];
 
 class JsonDb {
   constructor(file) {

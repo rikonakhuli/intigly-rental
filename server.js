@@ -46,13 +46,21 @@ const APP_DIR = __dirname;
 const DATA_DIR = process.env.DATA_DIR || path.join(APP_DIR, "data");
 
 // All money in paise (1 rupee = 100 paise). The server decides every amount.
-const FEE_PAISE = { standard: 100000, premium: 150000 }; // Rs 1000 (1 BHK), Rs 1500 (1.5 BHK and above)
+// Listing fee = 10% of monthly rent, computed on the server from the listing's rent.
+const FEE_RATE_PERCENT = 10;
+// Promo FIRST1000: posting is free for the first N listings that publish with it (counted server-side).
+const PROMO_CODE = "FIRST1000";
+const PROMO_FREE_SLOTS = Number(process.env.PROMO_FIRST_N) || 1000;
 const CREDIT_PRICE_PAISE = 1000;                          // Rs 10 per call credit
 const FREE_CREDITS = 10;                                  // granted once per renter at signup
 const MAX_CREDITS_PER_ORDER = 100;
 const MIN_PHOTOS = 3;
 const CITIES = ["Bangalore", "Mumbai", "Delhi", "Kolkata"];
 const SESSION_DAYS = 30;
+const BHK_VALUES = ["1RK", "1", "1.5", "2", "2.5", "3", "3.5", "4"];
+const FURNISHING_VALUES = ["Unfurnished", "Semi-furnished", "Fully furnished"];
+// Sample listings (source seed) are hidden when SHOW_SAMPLE_LISTINGS=0, so the platform can start with owner listings only.
+const SHOW_SAMPLES = process.env.SHOW_SAMPLE_LISTINGS !== "0";
 
 const db = createDb();
 const storage = createStorage(DATA_DIR);
@@ -162,6 +170,26 @@ function payuResponseHashOk(f) {
   return [withUdf, noUdf].some((parts) => safeEqualHex(sha512(pre.concat(parts).join("|")), got));
 }
 const rupees = (paise) => (paise / 100).toFixed(2);
+// Listing fee in paise = 10% of monthly rent in rupees. Rs 30,000 rent -> Rs 3,000 -> 300000 paise.
+const feeForRent = (rentRupees) => Math.round(Number(rentRupees)) * FEE_RATE_PERCENT;
+// A free FIRST1000 slot is "claimed" when a listing published with the code and was not rejected.
+// Rejected listings release their slot. Counted from the db on every check (single process, sync).
+const promoUsed = () => db.filter("listings", (l) => !!l.promo_claimed_at && l.status !== "rejected").length;
+const promoRemaining = () => Math.max(0, PROMO_FREE_SLOTS - promoUsed());
+const promoInfo = () => ({ code: PROMO_CODE, total: PROMO_FREE_SLOTS, remaining: promoRemaining() });
+// Reviews: newest first, author shown by first name only.
+function reviewsFor(listingId) {
+  return db.filter("reviews", (r) => r.listing_id === listingId).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+function reviewAvg(listingId) {
+  const rows = reviewsFor(listingId);
+  return rows.length ? Math.round((rows.reduce((a, r) => a + r.rating, 0) / rows.length) * 10) / 10 : null;
+}
+function reviewView(r) {
+  const u = db.find("users", (x) => x.id === r.user_id);
+  return { id: r.id, rating: r.rating, comment: r.comment, created_at: r.created_at,
+    author: u && u.name ? String(u.name).trim().split(/\s+/)[0] : "Renter" };
+}
 function payuBase(req) { return PUBLIC_BASE_URL || ("http://" + (req.headers.host || "localhost")); }
 // Writes the order row and returns the form params the browser POSTs to PayU.
 function createPayuPayment(req, user, kind, ref, amountPaise, quantity, productinfo) {
@@ -225,14 +253,20 @@ function publicListing(l) {
   const media = db.filter("media", (m) => m.listing_id === l.id);
   const photos = media.filter((m) => m.kind === "photo").map((m) => storage.driver.publicUrl(m.key));
   const videos = media.filter((m) => m.kind === "video").map((m) => storage.driver.publicUrl(m.key));
+  const owner = l.owner_id ? db.find("users", (u) => u.id === l.owner_id) : null;
+  const sqm = Number(l.area_sqm) || 0;
   return {
     id: l.id, title: l.title, city: l.city, locality: l.locality, lat: l.lat, lng: l.lng,
-    status: l.status, fee_paise: l.fee_paise || null, reject_reason: l.reject_reason || null,
-    rent: l.rent, deposit: l.deposit, deposit_note: l.deposit_note || null,
-    bhk: l.bhk, bathrooms: l.bathrooms, area_sqm: l.area_sqm, balcony: !!l.balcony,
-    furnishing: l.furnishing || "Unfurnished", description: l.description || "", source: l.source,
+    status: l.status, fee_paise: l.fee_paise || null, promo_code: l.promo_code || null, reject_reason: l.reject_reason || null,
+    review_count: reviewsFor(l.id).length, rating: reviewAvg(l.id),
+    rent: l.rent, deposit: l.deposit,
+    bhk: l.bhk, bathrooms: l.bathrooms, area_sqm: sqm, area_sqft: Math.round(sqm * 10.7639),
+    balcony: !!l.balcony, furnishing: l.furnishing || "Unfurnished", description: l.description || "",
+    source: l.source, sample: l.source === "seed",
+    verified: l.source !== "seed" && !!l.approved_at,
+    owner_first_name: owner && owner.name ? String(owner.name).trim().split(/\s+/)[0] : null,
     photos, videos, has_video: videos.length > 0,
-    has_phone: !!(l.owner_id && (db.find("users", (u) => u.id === l.owner_id) || {}).phone)
+    has_phone: !!(owner && owner.phone)
   };
 }
 function fail(status, msg, extra) { return Object.assign(new Error(msg), { status, extra }); }
@@ -243,14 +277,15 @@ function parseListingFields(body) {
     lat: Number(body.lat), lng: Number(body.lng), bhk: str(body.bhk, 4),
     bathrooms: Number(body.bathrooms), area_sqm: Number(body.area_sqm),
     balcony: body.balcony === true || body.balcony === "yes", rent: Number(body.rent),
-    deposit: Number(body.deposit), furnishing: str(body.furnishing, 30) || "Unfurnished",
+    deposit: Number(body.deposit), furnishing: str(body.furnishing, 30),
     description: str(body.description, 600)
   };
   if (!f.title) throw fail(400, "Title is required");
   if (CITIES.indexOf(f.city) === -1) throw fail(400, "Pick one of the four cities");
   if (!f.locality) throw fail(400, "Locality is required");
   if (!(f.lat >= 6 && f.lat <= 37 && f.lng >= 68 && f.lng <= 98)) throw fail(400, "Pin the location on the map");
-  if (["1", "1.5", "2", "2.5", "3", "4"].indexOf(f.bhk) === -1) throw fail(400, "BHK is required");
+  if (BHK_VALUES.indexOf(f.bhk) === -1) throw fail(400, "Pick the BHK type");
+  if (FURNISHING_VALUES.indexOf(f.furnishing) === -1) throw fail(400, "Pick the furnishing");
   if (![1, 2, 3, 4].includes(f.bathrooms)) throw fail(400, "Bathrooms is required");
   if (!(f.area_sqm >= 10 && f.area_sqm <= 2000)) throw fail(400, "Total area in square meters is required");
   if (typeof body.balcony !== "boolean" && body.balcony !== "yes" && body.balcony !== "no") throw fail(400, "Balcony yes or no is required");
@@ -258,7 +293,6 @@ function parseListingFields(body) {
   if (!(Number.isInteger(f.deposit) && f.deposit >= 0)) throw fail(400, "Deposit is required (whole rupees, 0 or more)");
   return f;
 }
-const feeFor = (bhk) => (Number(bhk) >= 1.5 ? FEE_PAISE.premium : FEE_PAISE.standard);
 
 // ---------- body readers ----------
 function readBody(req, limit) {
@@ -299,13 +333,13 @@ async function handleApi(req, res, url) {
   // ----- public listings
   if (m === "GET" && p === "/api/listings") {
     const city = url.searchParams.get("city");
-    const rows = db.filter("listings", (l) => l.status === "live" && (!city || l.city === city));
+    const rows = db.filter("listings", (l) => l.status === "live" && (!city || l.city === city) && (SHOW_SAMPLES || l.source !== "seed"));
     return sendJson(res, 200, { listings: rows.map(publicListing) });
   }
   if (m === "GET" && parts.length === 3 && parts[1] === "listings") {
     const l = db.find("listings", (x) => x.id === parts[2] && x.status === "live");
-    if (!l) throw fail(404, "Listing not found");
-    return sendJson(res, 200, { listing: publicListing(l) });
+    if (!l || (!SHOW_SAMPLES && l.source === "seed")) throw fail(404, "Listing not found");
+    return sendJson(res, 200, { listing: publicListing(l), reviews: reviewsFor(l.id).map(reviewView) });
   }
 
   // ----- auth
@@ -384,6 +418,7 @@ async function handleApi(req, res, url) {
     const row = db.insert("media", { id: newId("M"), listing_id: l.id, kind, key, content_type: ctype, size: buf.length, created_at: new Date().toISOString() });
     return sendJson(res, 201, { media: { id: row.id, kind, url: storage.driver.publicUrl(key) } });
   }
+  if (m === "GET" && p === "/api/promo") return sendJson(res, 200, { promo: promoInfo() });
   if (m === "POST" && parts.length === 4 && parts[1] === "listings" && parts[3] === "submit") {
     const u = requireUser(req, ["owner"]);
     const l = ownListing(u, parts[2]);
@@ -395,15 +430,53 @@ async function handleApi(req, res, url) {
     if (videos < 1) throw fail(400, "A video of the place is required");
     const b = await readJson(req);
     if (b.owner_confirm !== true) throw fail(400, "Tick the owner confirmation. Brokers and agents cannot post.");
-    const updated = db.update("listings", (x) => x.id === l.id, { status: "awaiting_payment", owner_confirmed_at: new Date().toISOString(), fee_paise: feeFor(l.bhk), updated_at: new Date().toISOString() });
-    return sendJson(res, 200, { listing: publicListing(updated) });
+    const now = new Date().toISOString();
+    const fee = feeForRent(l.rent);
+    const code = str(b.promo_code, 40).toUpperCase();
+    if (code && code !== PROMO_CODE) throw fail(400, "That promo code is not valid.");
+    // The free slot is claimed inside one synchronous transaction, so two posts cannot take the last slot.
+    const result = db.transaction((tx) => {
+      const cur = tx.find("listings", (x) => x.id === l.id);
+      const free = code === PROMO_CODE && promoRemaining() > 0;
+      const patch = { owner_confirmed_at: now, fee_paise: fee, updated_at: now, promo_code: code || null };
+      if (free) Object.assign(patch, { status: "pending_approval", promo_claimed_at: now, payment_id: "FIRST1000", paid_at: null });
+      else Object.assign(patch, { status: "awaiting_payment" });
+      return { listing: tx.update("listings", (x) => x.id === cur.id, patch), free, soldOut: code === PROMO_CODE && !free };
+    });
+    return sendJson(res, 200, {
+      listing: publicListing(result.listing),
+      promo: { applied: result.free, sold_out: result.soldOut, code: code || null, remaining: promoRemaining(), total: PROMO_FREE_SLOTS }
+    });
   }
   if (m === "POST" && parts.length === 5 && parts[1] === "listings" && parts[3] === "pay" && parts[4] === "order") {
     const u = requireUser(req, ["owner"]);
     const l = ownListing(u, parts[2]);
     if (l.status !== "awaiting_payment") throw fail(409, "Listing is not waiting for payment");
+    if (!l.fee_paise) throw fail(409, "No fee due for this listing");
     const payment = createPayuPayment(req, u, "listing", l.id, l.fee_paise, 1, "Listing fee");
     return sendJson(res, 200, { payment, amount: l.fee_paise, currency: "INR" });
+  }
+
+  // Free FIRST1000 publish: no PayU call. The slot was already claimed at submit, so only the status moves.
+  if (m === "POST" && parts.length === 5 && parts[1] === "listings" && parts[3] === "pay" && parts[4] === "free") {
+    const u = requireUser(req, ["owner"]);
+    const l = ownListing(u, parts[2]);
+    if (l.status !== "pending_approval" || !l.promo_claimed_at) throw fail(409, "No free slot is held for this listing");
+    return sendJson(res, 200, { listing: publicListing(l) });
+  }
+
+  // ----- reviews: renters only, one per renter per listing, live listings only
+  if (m === "POST" && parts.length === 4 && parts[1] === "listings" && parts[3] === "reviews") {
+    const u = requireUser(req, ["renter"]);
+    const l = db.find("listings", (x) => x.id === parts[2] && x.status === "live");
+    if (!l || (!SHOW_SAMPLES && l.source === "seed")) throw fail(404, "Listing not found");
+    const b = await readJson(req);
+    const rating = Number(b.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw fail(400, "Pick a rating from 1 to 5 stars");
+    const comment = str(b.comment, 500);
+    if (db.find("reviews", (r) => r.user_id === u.id && r.listing_id === l.id)) throw fail(409, "You already reviewed this listing");
+    const row = db.insert("reviews", { id: newId("V"), listing_id: l.id, user_id: u.id, rating, comment, created_at: new Date().toISOString() });
+    return sendJson(res, 201, { review: reviewView(row), listing: publicListing(l) });
   }
   if (m === "POST" && p === "/api/payu/callback") return handlePayuCallback(req, res);
   if (m === "GET" && p === "/api/payu/status") {
@@ -419,9 +492,9 @@ async function handleApi(req, res, url) {
   if (m === "POST" && parts.length === 4 && parts[1] === "listings" && parts[3] === "reveal") {
     const u = requireUser(req, ["renter"]);
     const l = db.find("listings", (x) => x.id === parts[2] && x.status === "live");
-    if (!l) throw fail(404, "Listing not found");
+    if (!l || (!SHOW_SAMPLES && l.source === "seed")) throw fail(404, "Listing not found");
     const owner = l.owner_id ? db.find("users", (x) => x.id === l.owner_id) : null;
-    if (!owner || !owner.phone) throw fail(404, "No phone number on this listing (demo listing)");
+    if (!owner || !owner.phone) throw fail(404, "Sample listing: no owner contact is attached.");
     const already = db.find("reveals", (r) => r.user_id === u.id && r.listing_id === l.id);
     if (already) return sendJson(res, 200, { phone: owner.phone, charged: false, credits: creditBalance(u.id) });
     const result = db.transaction((tx) => {
@@ -432,7 +505,7 @@ async function handleApi(req, res, url) {
       tx.insert("reveals", { id: newId("R"), user_id: u.id, listing_id: l.id, created_at: now });
       return { noCredits: false, balance: balance - 1 };
     });
-    if (result.noCredits) throw fail(402, "No call credits left. Buy more for Rs 10 each.", { credits: 0, code: "no_credits" });
+    if (result.noCredits) throw fail(402, "You are out of call credits. Buy more to see owner contacts (Rs 10 per call).", { credits: 0, code: "no_credits" });
     return sendJson(res, 200, { phone: owner.phone, charged: true, credits: result.balance });
   }
   if (m === "POST" && p === "/api/credits/order") {
