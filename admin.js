@@ -13,7 +13,44 @@
     return j;
   }
 
+  async function loadUsers() {
+    $("#adminMsg").textContent = "";
+    $("#adminList").innerHTML = ""; $("#passUsers").hidden = false;
+    try {
+      const j = await api("/api/admin/users");
+      $("#adminLogin").hidden = true;
+      const rows = j.users || [];
+      $("#passUsersList").innerHTML = rows.length ? rows.map((u) =>
+        '<article class="admin-card" data-uid="' + esc(u.id) + '">' +
+        '<div class="title">' + esc(u.name) + '</div>' +
+        '<div class="meta">' + esc(u.email) + '</div>' +
+        '<div class="meta">' + (u.pass.active ? 'Weekly Pass active, ' + u.pass.days_left + ' day(s) left, until ' + esc(new Date(u.pass.expires_at).toLocaleString("en-IN")) : 'Locked, no active pass') + '</div>' +
+        '<div class="admin-actions">' +
+          (u.pass.active ? '<button class="btn" data-pact="revoke">Revoke pass</button>' : '') +
+          '<button class="btn primary" data-pact="grant">Grant 7 days</button>' +
+        '</div></article>').join("") : '<p class="muted">No renters yet.</p>';
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) {
+        $("#adminLogin").hidden = false;
+        $("#passUsersList").innerHTML = "";
+        $("#adminMsg").textContent = e.status === 403 ? "This account is not an admin." : "Log in as admin.";
+      } else $("#adminMsg").textContent = "Error: " + e.message;
+    }
+  }
+  $("#passUsers").addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-pact]");
+    if (!btn) return;
+    const uid = btn.closest("[data-uid]").dataset.uid;
+    const expires = btn.dataset.pact === "grant" ? new Date(Date.now() + 7 * 86400000).toISOString() : null;
+    try {
+      await api("/api/admin/users/" + encodeURIComponent(uid) + "/pass", { expires_at: expires });
+      loadUsers();
+    } catch (err) { $("#adminMsg").textContent = "Error: " + err.message; }
+  });
+
   async function load() {
+    if (status === "users") return loadUsers();
+    $("#passUsers").hidden = true;
     $("#adminMsg").textContent = "";
     try {
       const j = await api("/api/admin/listings?status=" + encodeURIComponent(status));

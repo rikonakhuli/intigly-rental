@@ -12,6 +12,7 @@
       <button class="city-btn active" data-status="pending_approval">Pending approval</button>
       <button class="city-btn" data-status="live">Live</button>
       <button class="city-btn" data-status="rejected">Rejected</button>
+      <button class="city-btn" data-status="users">Renters</button>
     </div>
   </header>
   <main class="admin-wrap">
@@ -25,6 +26,10 @@
       </form>
     </div>
     <div id="adminList"></div>
+    <section id="passUsers" class="pass-users" hidden>
+      <h2>Renters and Weekly Pass</h2>
+      <div id="passUsersList"></div>
+    </section>
   </main>
   <script src="admin.js"></script>
 </body>

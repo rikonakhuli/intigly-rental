@@ -16,8 +16,11 @@
 //   POST /api/listings/:id/pay/order    owner: PayU form params for the listing fee (browser POSTs them to PayU)
 //   POST /api/payu/callback             PayU result (surl/furl): verify reverse hash, then move to pending_approval
 //   GET  /api/payu/status?txnid=        owner/renter: state of one PayU payment
-//   POST /api/listings/:id/reveal       renter: reveal owner phone, costs 1 credit (first time only)
-//   POST /api/credits/order             renter: {quantity} PayU form params, Rs 10 per credit
+//   POST /api/listings/:id/reveal       renter: reveal owner phone. Needs an active Weekly Pass (unlimited, no credits)
+//   POST /api/pass/order                renter: PayU form params for the Weekly Pass (server prices it)
+//   POST /api/credits/order             renter: {quantity} PayU form params, Rs 10 per credit (dormant, not gating reveals)
+//   GET  /api/admin/users               admin: renters with pass status
+//   POST /api/admin/users/:id/pass      admin: {expires_at: ISO|null} set or revoke a pass
 //   GET  /api/admin/listings            admin: pending_approval + counts
 //   POST /api/admin/listings/:id/approve|reject   admin
 //   GET  /media/<key>                   stored photo/video
@@ -54,6 +57,12 @@ const PROMO_FREE_SLOTS = Number(process.env.PROMO_FIRST_N) || 1000;
 const CREDIT_PRICE_PAISE = 1000;                          // Rs 10 per call credit
 const FREE_CREDITS = 10;                                  // granted once per renter at signup
 const MAX_CREDITS_PER_ORDER = 100;
+// Weekly Pass: the only thing that unlocks owner contact, photos and video for renters.
+// PASS_PRICE_RUPEES is configurable (default 400). Stored on the user row as pass_expires_at.
+const PASS_PRICE_RUPEES = (() => { const n = Number(process.env.PASS_PRICE_RUPEES); return Number.isFinite(n) && n > 0 ? n : 400; })();
+const PASS_PRICE_PAISE = Math.round(PASS_PRICE_RUPEES * 100);
+const PASS_DAYS = 7;
+const PASS_MS = PASS_DAYS * 86400000;
 const MIN_PHOTOS = 3;
 const CITIES = ["Bangalore", "Mumbai", "Delhi", "Kolkata"];
 const SESSION_DAYS = 30;
@@ -138,6 +147,21 @@ function requireUser(req, roles) {
 // ---------- credits ----------
 function creditBalance(userId) {
   return db.filter("ledger", (e) => e.user_id === userId).reduce((sum, e) => sum + e.delta, 0);
+}
+
+// ---------- Weekly Pass ----------
+// Expiry is checked here on every request (server side). Nothing on the client decides it.
+function passActive(u) {
+  return !!(u && u.pass_expires_at && Date.parse(u.pass_expires_at) > Date.now());
+}
+function passView(u) {
+  const active = passActive(u);
+  return {
+    active,
+    expires_at: active ? u.pass_expires_at : null,
+    days_left: active ? Math.ceil((Date.parse(u.pass_expires_at) - Date.now()) / 86400000) : 0,
+    price_rupees: PASS_PRICE_RUPEES, days: PASS_DAYS
+  };
 }
 
 // ---------- PayU hosted checkout ----------
@@ -233,6 +257,11 @@ async function handlePayuCallback(req, res) {
       tx.update("orders", (o) => o.id === order.id, { status: "paid", payu_mihpayid: mihpayid, paid_at: now });
       if (order.kind === "listing") {
         tx.update("listings", (x) => x.id === order.ref && x.status === "awaiting_payment", { status: "pending_approval", payment_id: mihpayid, paid_at: now });
+      } else if (order.kind === "pass") {
+        // 7 days from payment. If a pass is still running, the new week stacks on the end so paid days are not lost.
+        const buyer = tx.find("users", (x) => x.id === order.user_id);
+        const base = passActive(buyer) ? Date.parse(buyer.pass_expires_at) : Date.now();
+        tx.update("users", (x) => x.id === order.user_id, { pass_expires_at: new Date(base + PASS_MS).toISOString() });
       } else {
         tx.insert("ledger", { id: newId("L"), user_id: order.user_id, delta: order.quantity, reason: "purchase", ref: order.id, created_at: now });
       }
@@ -339,7 +368,10 @@ async function handleApi(req, res, url) {
   if (m === "GET" && parts.length === 3 && parts[1] === "listings") {
     const l = db.find("listings", (x) => x.id === parts[2] && x.status === "live");
     if (!l || (!SHOW_SAMPLES && l.source === "seed")) throw fail(404, "Listing not found");
-    return sendJson(res, 200, { listing: publicListing(l), reviews: reviewsFor(l.id).map(reviewView) });
+    const pub = publicListing(l);
+    const viewer = currentUser(req);
+    const out = passActive(viewer) ? Object.assign(pub, { media_locked: false }) : lockMedia(pub);
+    return sendJson(res, 200, { listing: out, reviews: reviewsFor(l.id).map(reviewView), pass: passView(viewer) });
   }
 
   // ----- auth
@@ -381,8 +413,8 @@ async function handleApi(req, res, url) {
   }
   if (m === "GET" && p === "/api/me") {
     const u = currentUser(req);
-    if (!u) return sendJson(res, 200, { user: null });
-    return sendJson(res, 200, { user: publicUser(u), credits: creditBalance(u.id) });
+    if (!u) return sendJson(res, 200, { user: null, pass: passView(null) });
+    return sendJson(res, 200, { user: publicUser(u), credits: creditBalance(u.id), pass: passView(u) });
   }
 
   // ----- owner: listing post flow
@@ -485,19 +517,23 @@ async function handleApi(req, res, url) {
     const o = db.find("orders", (x) => x.payu_txnid === txnid && x.user_id === u.id);
     if (!o) throw fail(404, "Unknown payment");
     const l = o.kind === "listing" ? db.find("listings", (x) => x.id === o.ref) : null;
-    return sendJson(res, 200, { status: o.status, kind: o.kind, quantity: o.quantity, credits: creditBalance(u.id), listing_status: l ? l.status : null });
+    return sendJson(res, 200, { status: o.status, kind: o.kind, quantity: o.quantity, credits: creditBalance(u.id), listing_status: l ? l.status : null, pass: passView(u) });
   }
 
-  // ----- renter: call reveal and credits
+  // ----- renter: call reveal (Weekly Pass gate, unlimited while active)
   if (m === "POST" && parts.length === 4 && parts[1] === "listings" && parts[3] === "reveal") {
     const u = requireUser(req, ["renter"]);
     const l = db.find("listings", (x) => x.id === parts[2] && x.status === "live");
     if (!l || (!SHOW_SAMPLES && l.source === "seed")) throw fail(404, "Listing not found");
     const owner = l.owner_id ? db.find("users", (x) => x.id === l.owner_id) : null;
     if (!owner || !owner.phone) throw fail(404, "Sample listing: no owner contact is attached.");
-    const already = db.find("reveals", (r) => r.user_id === u.id && r.listing_id === l.id);
-    if (already) return sendJson(res, 200, { phone: owner.phone, charged: false, credits: creditBalance(u.id) });
-    const result = db.transaction((tx) => {
+    // Expiry is checked here, server side. Credit balance is ignored: only the pass unlocks contacts.
+    if (!passActive(u)) throw fail(402, "Get the Weekly Pass (Rs " + PASS_PRICE_RUPEES + " for " + PASS_DAYS + " days) to see owner contacts.", { code: "pass_required", pass: passView(u) });
+    return sendJson(res, 200, { phone: owner.phone, charged: false, pass: passView(u) });
+  }
+  // DORMANT (kept on purpose, not called): the old per-call credit deduction. Left in place so it can be restored.
+  function revealWithCredit(u, l) {
+    return db.transaction((tx) => {
       const balance = tx.filter("ledger", (e) => e.user_id === u.id).reduce((s, e) => s + e.delta, 0);
       if (balance < 1) return { noCredits: true, balance };
       const now = new Date().toISOString();
@@ -505,8 +541,11 @@ async function handleApi(req, res, url) {
       tx.insert("reveals", { id: newId("R"), user_id: u.id, listing_id: l.id, created_at: now });
       return { noCredits: false, balance: balance - 1 };
     });
-    if (result.noCredits) throw fail(402, "You are out of call credits. Buy more to see owner contacts (Rs 10 per call).", { credits: 0, code: "no_credits" });
-    return sendJson(res, 200, { phone: owner.phone, charged: true, credits: result.balance });
+  }
+  if (m === "POST" && p === "/api/pass/order") {
+    const u = requireUser(req, ["renter"]);
+    const payment = createPayuPayment(req, u, "pass", u.id, PASS_PRICE_PAISE, 1, "Weekly Pass");
+    return sendJson(res, 200, { payment, amount: PASS_PRICE_PAISE, currency: "INR", pass: passView(u) });
   }
   if (m === "POST" && p === "/api/credits/order") {
     const u = requireUser(req, ["renter"]);
@@ -520,6 +559,26 @@ async function handleApi(req, res, url) {
 
 
   // ----- admin
+  if (m === "GET" && p === "/api/admin/users") {
+    requireUser(req, ["admin"]);
+    const rows = db.filter("users", (u) => u.role === "renter").map((u) => ({ id: u.id, name: u.name, email: u.email, pass: passView(u) }));
+    return sendJson(res, 200, { users: rows });
+  }
+  if (m === "POST" && parts.length === 5 && parts[1] === "admin" && parts[2] === "users" && parts[4] === "pass") {
+    requireUser(req, ["admin"]);
+    const b = await readJson(req);
+    const target = db.find("users", (x) => x.id === parts[3]);
+    if (!target) throw fail(404, "User not found");
+    let exp = null;
+    if (b.expires_at !== null) {
+      const t = Date.parse(String(b.expires_at || ""));
+      if (!Number.isFinite(t)) throw fail(400, "expires_at must be an ISO time, or null to revoke");
+      exp = new Date(t).toISOString();
+    }
+    db.update("users", (x) => x.id === target.id, { pass_expires_at: exp });
+    const fresh = db.find("users", (x) => x.id === target.id);
+    return sendJson(res, 200, { user: publicUser(fresh), pass: passView(fresh) });
+  }
   if (m === "GET" && p === "/api/admin/listings") {
     requireUser(req, ["admin"]);
     const status = url.searchParams.get("status") || "pending_approval";
@@ -545,7 +604,15 @@ async function handleApi(req, res, url) {
 }
 
 function maskPhone(p) { return p ? p.slice(0, 3) + "XXXXX" + p.slice(-2) : null; }
-function publicUser(u) { return { id: u.id, email: u.email, name: u.name, role: u.role, phone_on_file: !!u.phone }; }
+function publicUser(u) {
+  const pass = passView(u);
+  return { id: u.id, email: u.email, name: u.name, role: u.role, phone_on_file: !!u.phone,
+    pass_active: pass.active, pass_expires_at: pass.expires_at, pass_days_left: pass.days_left };
+}
+// Locked view for viewers without an active pass: no photo or video URLs, counts only.
+function lockMedia(pub) {
+  return Object.assign({}, pub, { photos: [], videos: [], photo_count: pub.photos.length, video_count: pub.videos.length, media_locked: true });
+}
 
 // ---------- static + media ----------
 const STATIC = new Set(["index.html", "styles.css", "app.js", "data.js", "config.js", "admin.js"]);

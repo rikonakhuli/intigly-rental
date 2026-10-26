@@ -199,7 +199,7 @@
       const el = document.querySelector('#cardList .card[data-id="' + id + '"]');
       if (el) el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
     }
-    if (opts.openDetail) openDetail(l);
+    if (opts.openDetail) openDetailById(l.id);
   }
 
   // ---------- detail sheet ----------
@@ -208,13 +208,19 @@
     return '<div class="line"><div>' + label + (note ? '<span class="note">' + note + "</span>" : "") + "</div><strong>" + amount + "</strong></div>";
   }
 
+  // Always reload the detail from the server so the photo/video/phone lock is the server's call.
+  function openDetailById(id) {
+    api("/api/listings/" + encodeURIComponent(id)).then((j) => { state.passOn = !!(j.pass && j.pass.active); openDetail(j.listing); }).catch(() => toast("That listing is not available"));
+  }
   function openDetail(l) {
     const photos = l.photos || [];
-    const gallery = photos.length
+    // Server decides: detail responses carry media_locked. Card data is never used for the locked check.
+    const locked = l.media_locked === true;
+    const gallery = locked ? lockedHero(l) : photos.length
       ? '<div class="gallery">' + photos.slice(0, 4).map((u, i) => '<img class="' + (i === 0 ? "big" : "") + '" src="' + esc(u) + '" alt="' + esc(l.title) + '" />').join("") + "</div>" +
         (photos.length > 1 ? '<span class="gallery-count">' + photos.length + " photos</span>" : "")
       : '<div class="gallery"><div class="ph">No photos yet</div></div>';
-    const video = l.videos && l.videos.length
+    const video = locked ? "" : (l.videos && l.videos.length)
       ? '<div class="section-h">Video tour</div><div class="video-box"><video controls preload="metadata" src="' + esc(l.videos[0]) + '"></video></div>'
       : "";
     const dist = state.ref ? "<br/>" + fmtDist(haversineKm(state.ref, l)) + " from " + esc(state.ref.label || "your search") : "";
@@ -267,6 +273,8 @@
       '<div class="cta-bar"><div class="lbl" id="ctaLabel"></div><div id="callBox"></div></div>';
 
     renderCallBox(l);
+    const lb = document.getElementById("lockBuyBtn");
+    if (lb) lb.addEventListener("click", () => buyPass());
     wireShare(l);
     loadReviews(l);
     openView("detailView");
@@ -297,8 +305,41 @@
       box.innerHTML = '<span class="muted small">Owner accounts can\'t call other owners.</span>';
       return;
     }
+    if (!state.user.pass_active) {
+      box.innerHTML = '<button class="btn primary" id="passBuyBtn">Buy Weekly Pass ₹' + passPrice() + '</button>';
+      $("#passBuyBtn").addEventListener("click", buyPass);
+      lbl.innerHTML = "<b>Owner number locked</b>Weekly Pass ₹" + passPrice() + " for " + PASS_DAYS + " days";
+      return;
+    }
     box.innerHTML = '<button class="btn primary" id="callBtn">Call owner</button>';
     $("#callBtn").addEventListener("click", () => revealCall(l));
+  }
+
+  const PASS_DAYS = 7;
+  function passPrice() { return (state.passPrice || 400); }
+  // Locked hero: map-style grey tile, lock badge, price and buy. Shown on detail when no active pass.
+  function lockedHero(l) {
+    return '<div class="lock-hero">' +
+      '<div class="lock-card">' +
+        '<div class="lock-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2"/></svg></div>' +
+        '<div class="lock-t">Photos, video and owner number are locked</div>' +
+        '<div class="lock-s">Weekly Pass ₹' + passPrice() + ' · ' + PASS_DAYS + ' days unlimited access</div>' +
+        '<button class="btn primary wide" id="lockBuyBtn">Buy Weekly Pass ₹' + passPrice() + '</button>' +
+      '</div>' +
+    '</div>';
+  }
+  // Pass purchase: the server computes the amount and builds the PayU form. The browser only posts it.
+  async function buyPass() {
+    if (!state.user) { openGate("login", () => buyPass()); return; }
+    if (state.user.role !== "renter") { toast("The pass is for renter accounts."); return; }
+    try {
+      const j = await api("/api/pass/order", {});
+      if (j.pass) state.passPrice = j.pass.price_rupees;
+      postToPayu(j.payment);
+    } catch (e) { toast("Could not start payment: " + e.message, 3600); }
+  }
+  async function refreshMe() {
+    try { const j = await api("/api/me"); state.user = j.user; if (j.pass) state.passPrice = j.pass.price_rupees; updateAccount(); } catch (e) { /* keep current */ }
   }
 
   async function revealCall(l) {
@@ -306,16 +347,16 @@
     if (btn) btn.disabled = true;
     try {
       const j = await api("/api/listings/" + encodeURIComponent(l.id) + "/reveal", {});
-      state.credits = j.credits; updateAccount();
+      if (j.pass && state.user) { state.user.pass_active = true; state.user.pass_days_left = j.pass.days_left; }
+      updateAccount();
       $("#callBox").innerHTML = '<div class="call-done"><a class="btn primary" href="tel:' + esc(j.phone) + '">Call ' + esc(j.phone) + "</a>" +
-        '<span class="muted small">' + (j.charged ? "1 credit used. " : "Already unlocked, no credit used. ") + "Credits left: " + j.credits + ".</span></div>";
+        '<span class="muted small">Weekly Pass active' + (j.pass ? ", " + plural(j.pass.days_left, "day") + " left" : "") + ".</span></div>";
       $("#ctaLabel").innerHTML = "<b>Owner: " + esc(l.owner_first_name || "Owner") + "</b>Number unlocked";
     } catch (e) {
       if (e.status === 402) {
-        state.credits = 0; updateAccount();
-        $("#callBox").innerHTML = '<button class="btn primary" id="buyBtn">Buy call credits</button>';
-        $("#buyBtn").addEventListener("click", openCredits);
-        $("#ctaLabel").innerHTML = "<b>Out of call credits</b>₹10 per call";
+        if (state.user) state.user.pass_active = false;
+        updateAccount();
+        renderCallBox(l);
         toast(e.message, 3600);
       } else {
         if (btn) btn.disabled = false;
@@ -541,8 +582,12 @@
       return;
     }
     if (state.user.role === "renter") {
-      a.innerHTML = '<button class="chip" id="creditsChip">' + state.credits + ' credits</button><button class="link-btn" id="logoutBtn">Log out</button>';
-      $("#creditsChip").addEventListener("click", openCredits);
+      const badge = state.user.pass_active
+        ? '<span class="pass-badge on" id="passBadge">Pass · ' + plural(state.user.pass_days_left || 0, "day") + " left</span>"
+        : '<button class="pass-badge off" id="passBadge">Locked · Get pass</button>';
+      a.innerHTML = badge + '<button class="link-btn" id="logoutBtn">Log out</button>';
+      const pb = $("#passBadge");
+      if (!state.user.pass_active) pb.addEventListener("click", buyPass);
     } else {
       a.innerHTML = '<button class="btn primary small-btn" id="postBtn">Post a property</button><button class="link-btn" id="logoutBtn">Log out</button>';
       $("#postBtn").addEventListener("click", openPost);
@@ -616,7 +661,8 @@
       try {
         const s = await api("/api/payu/status?txnid=" + encodeURIComponent(txnid));
         if (s.kind === "listing") toast("Paid. Your listing is waiting for admin approval before it goes live.", 4200);
-        else toast("Payment received. You now have " + s.credits + " credits.", 3200);
+        else if (s.kind === "pass") { await refreshMe(); toast("Weekly Pass active for " + PASS_DAYS + " days. Owner numbers and photos are unlocked.", 4200); if (state.selectedId) { const sel = state.listings.find((x) => x.id === state.selectedId); if (sel) openDetail(sel); } }
+        else toast("Payment received.", 3200);
       } catch (e) { toast("Payment received. Refresh to see your balance.", 3200); }
     } else if (result === "failed") toast("Payment failed or was cancelled. Nothing was charged to your listing or credits.", 4200);
     else toast("Payment could not be verified. Nothing was added. Contact support with reference " + txnid + ".", 5200);

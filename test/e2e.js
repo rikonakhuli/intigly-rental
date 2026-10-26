@@ -175,6 +175,67 @@ const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000
     const appText = await appJs.text();
     ok("app.js served with share + review hooks", appText.includes("wireShare") && appText.includes("loadReviews") && appText.includes("#listing="), appJs.status);
     ok("app.js has no hard-coded 1000/1500 flat fee", !/FEE_STANDARD|FEE_PREMIUM/.test(appText));
+
+    // ---- Weekly Pass ----
+    // A fresh renter with no pass. Listing detail is public, but media and phone are locked.
+    const pr = await call("POST", "/api/auth/signup", { email: "pass1@test.local", password: "password123", name: "Meera Iyer", role: "renter" });
+    const pCookie = pr.cookie;
+    const detLocked = await call("GET", "/api/listings/" + f1.id, undefined, pCookie);
+    ok("locked detail: basic info still visible (title, rent, locality, BHK)", detLocked.json.listing && detLocked.json.listing.title && detLocked.json.listing.rent === 30000 && detLocked.json.listing.locality && detLocked.json.listing.bhk, detLocked.json.listing);
+    ok("locked detail: photos and videos withheld", detLocked.json.listing.media_locked === true && detLocked.json.listing.photos.length === 0 && detLocked.json.listing.videos.length === 0 && detLocked.json.listing.photo_count === 3, detLocked.json.listing);
+    ok("locked detail: pass not active, price reported", detLocked.json.pass && detLocked.json.pass.active === false && detLocked.json.pass.price_rupees === 400, detLocked.json.pass);
+    const revLocked = await call("POST", "/api/listings/" + f1.id + "/reveal", {}, pCookie);
+    ok("locked reveal: 402 pass_required (no phone)", revLocked.status === 402 && revLocked.json.code === "pass_required" && !revLocked.json.phone, revLocked);
+    const meLocked = await call("GET", "/api/me", undefined, pCookie);
+    ok("me: renter without pass shows pass_active false", meLocked.json.user && meLocked.json.user.pass_active === false, meLocked.json);
+
+    // Pass purchase: server computes Rs 400 and makes a PayU order.
+    const po = await call("POST", "/api/pass/order", {}, pCookie);
+    ok("pass order created at Rs 400 (40000 paise)", po.status === 200 && po.json.amount === 40000 && po.json.payment && po.json.payment.params, po.json);
+    ok("pass order params include amount 400.00", po.json.payment && /400\.00/.test(JSON.stringify(po.json.payment.params)), po.json.payment && po.json.payment.params);
+    const anonPass = await call("POST", "/api/pass/order", {});
+    ok("pass order refused for anonymous", anonPass.status === 401, anonPass);
+    const ownerPass = await call("POST", "/api/pass/order", {}, oCookie);
+    ok("pass order refused for owner accounts", ownerPass.status === 403, ownerPass);
+
+    // Simulate PayU success via admin grant route (same write the callback does), then check unlock.
+    const grant = await call("POST", "/api/admin/users/" + pr.json.user.id + "/pass", { expires_at: new Date(Date.now() + 7 * 86400000).toISOString() }, adm.cookie);
+    ok("admin can grant a pass", grant.status === 200 && grant.json.pass.active === true, grant.json);
+    const detUnlocked = await call("GET", "/api/listings/" + f1.id, undefined, pCookie);
+    ok("unlocked detail after pass: photos and video present", detUnlocked.json.listing.media_locked === false && detUnlocked.json.listing.photos.length === 3 && detUnlocked.json.listing.videos.length === 1, detUnlocked.json.listing);
+    const revOk = await call("POST", "/api/listings/" + f1.id + "/reveal", {}, pCookie);
+    ok("pass holder: reveal returns owner phone", revOk.status === 200 && revOk.json.phone === "9876543210", revOk.json);
+    ok("pass holder: reveal does not charge credits", revOk.json.charged === false, revOk.json);
+    const meActive = await call("GET", "/api/me", undefined, pCookie);
+    ok("me: active pass reports days left", meActive.json.user.pass_active === true && meActive.json.user.pass_days_left >= 6, meActive.json.user);
+
+    // Credit path: a pass holder with zero credits is not blocked, and a non-pass renter is blocked even with credits.
+    const credBefore = (await call("GET", "/api/me", undefined, pCookie)).json.credits;
+    const rv2 = await call("POST", "/api/listings/" + f1.id + "/reveal", {}, pCookie);
+    const credAfter = (await call("GET", "/api/me", undefined, pCookie)).json.credits;
+    ok("credit path: pass holder reveal leaves the credit ledger untouched", rv2.status === 200 && credBefore === credAfter, { before: credBefore, after: credAfter, status: rv2.status });
+    const credCheck = await call("GET", "/api/me", undefined, r2.cookie);
+    ok("credit path: renter2 (credits on file, no pass) is blocked from reveal", (await call("POST", "/api/listings/" + f1.id + "/reveal", {}, r2.cookie)).status === 402, credCheck.json);
+
+    // Expiry: admin sets an expiry in the past. Server must revert to locked without any client help.
+    const expire = await call("POST", "/api/admin/users/" + pr.json.user.id + "/pass", { expires_at: new Date(Date.now() - 1000).toISOString() }, adm.cookie);
+    ok("admin sets pass in the past (expired)", expire.status === 200 && expire.json.pass.active === false, expire.json);
+    const detExpired = await call("GET", "/api/listings/" + f1.id, undefined, pCookie);
+    ok("expired pass: detail locked again", detExpired.json.listing.media_locked === true && detExpired.json.listing.photos.length === 0, detExpired.json.listing);
+    const revExpired = await call("POST", "/api/listings/" + f1.id + "/reveal", {}, pCookie);
+    ok("expired pass: reveal refused (402)", revExpired.status === 402 && !revExpired.json.phone, revExpired);
+
+    // Admin users list shows pass status.
+    const au = await call("GET", "/api/admin/users", undefined, adm.cookie);
+    const row = au.json.users && au.json.users.find((u) => u.id === pr.json.user.id);
+    ok("admin users list shows pass status", au.status === 200 && row && row.pass.active === false, au.json);
+    const auDenied = await call("GET", "/api/admin/users", undefined, pCookie);
+    ok("admin users list refused for renter", auDenied.status === 403, auDenied.status);
+
+    // Price is configurable: PASS_PRICE_RUPEES env sets the price the server reports and charges.
+    // (checked in the separate configured run below)
+    const appText2 = appText;
+    ok("app.js buy button wired to Weekly Pass", appText2.includes("Buy Weekly Pass"), null);
   } catch (e) {
     failed++; console.log("FAIL harness error: " + (e && e.stack || e));
   } finally {
