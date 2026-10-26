@@ -79,9 +79,3 @@ const LANDMARKS = [
   { name: "Sealdah station", city: "Kolkata", lat: 22.5677, lng: 88.3711 }
 ];
 
-const CITY_CENTERS = {
-  Bangalore: { lat: 12.9716, lng: 77.5946 },
-  Mumbai: { lat: 19.0760, lng: 72.8777 },
-  Delhi: { lat: 28.6139, lng: 77.2090 },
-  Kolkata: { lat: 22.5726, lng: 88.3639 }
-};

@@ -11,12 +11,6 @@
 <body>
   <header class="topbar">
     <div class="brand">Rental<span>Map</span></div>
-    <nav class="city-switch" role="group" aria-label="City">
-      <button class="city-btn active" data-city="Bangalore">BLR</button>
-      <button class="city-btn" data-city="Mumbai">BOM</button>
-      <button class="city-btn" data-city="Delhi">DEL</button>
-      <button class="city-btn" data-city="Kolkata">CCU</button>
-    </nav>
     <div id="accountArea" class="account"></div>
   </header>
 
@@ -178,14 +172,9 @@
         <section class="block">
           <h3>4. Location <span class="req">*</span></h3>
           <div class="grid2">
-            <label>City <span class="req">*</span>
-              <select name="city" required>
-                <option value="">Select city</option>
-                <option value="Bangalore">Bangalore (BLR)</option>
-                <option value="Mumbai">Mumbai (BOM)</option>
-                <option value="Delhi">Delhi (DEL)</option>
-                <option value="Kolkata">Kolkata (CCU)</option>
-              </select>
+            <label>City / town <span class="req">*</span>
+              <input name="city" required maxlength="60" list="cityList" placeholder="Type any city or town, e.g. Pune" autocomplete="off" />
+              <datalist id="cityList"></datalist>
             </label>
             <label>Locality <span class="req">*</span><input name="locality" maxlength="60" placeholder="e.g. Indiranagar" required /></label>
           </div>

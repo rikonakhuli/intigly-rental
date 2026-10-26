@@ -80,6 +80,11 @@ const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000
 
     const std = await makeListing("");
     ok("fee: rent 30000 -> fee 300000 paise (Rs 3,000)", std.submit.status === 200 && std.submit.json.listing.fee_paise === 300000, std.submit.json);
+    // free-text city: any town typed is accepted, and an empty city is refused
+    const pune = await call("POST", "/api/listings", { ...fields, city: "Pune", locality: "Koregaon Park", lat: 18.54, lng: 73.9 }, oCookie);
+    ok("post accepts free-text city (Pune, not in any list)", pune.status === 201 && pune.json.listing.city === "Pune", pune);
+    const noCity = await call("POST", "/api/listings", { ...fields, city: "" }, oCookie);
+    ok("post refuses an empty city", noCity.status === 400, noCity);
     ok("no promo -> awaiting_payment", std.submit.json.listing && std.submit.json.listing.status === "awaiting_payment", std.submit.json);
     ok("no promo -> promo.applied false", std.submit.json.promo && std.submit.json.promo.applied === false, std.submit.json.promo);
 
@@ -164,8 +169,10 @@ const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000
     ok("average of 4 and 5 is 4.5 (2 reviews)", avg2.json.listing.rating === 4.5 && avg2.json.listing.review_count === 2, avg2.json.listing);
 
     // ---- regression: no-login browsing and listing list still work
-    const list = await call("GET", "/api/listings?city=Bangalore");
-    ok("no-login listing browse still works", list.status === 200 && Array.isArray(list.json.listings), list.status);
+    const list = await call("GET", "/api/listings");
+    ok("no-login listing browse works without a city param", list.status === 200 && Array.isArray(list.json.listings), list.status);
+    const listCity = await call("GET", "/api/listings?city=Bangalore");
+    ok("city param is ignored (no gate): same list as unfiltered", listCity.status === 200 && listCity.json.listings.length === list.json.listings.length, listCity.status);
 
     // ---- static assets served
     const idx = await fetch(BASE + "/");

@@ -3,7 +3,7 @@
 // media files, and the admin dashboard. Deployed on Render as a single web service.
 //
 // Routes (JSON unless noted):
-//   GET  /api/listings?city=            live listings for a city (no contact details)
+//   GET  /api/listings                  all live listings, India-wide (no contact details)
 //   GET  /api/listings/:id              one live listing
 //   POST /api/auth/signup               {email,password,name,phone,role:'renter'|'owner'}
 //   POST /api/auth/login                {email,password}
@@ -64,7 +64,6 @@ const PASS_PRICE_PAISE = Math.round(PASS_PRICE_RUPEES * 100);
 const PASS_DAYS = 7;
 const PASS_MS = PASS_DAYS * 86400000;
 const MIN_PHOTOS = 3;
-const CITIES = ["Bangalore", "Mumbai", "Delhi", "Kolkata"];
 const SESSION_DAYS = 30;
 const BHK_VALUES = ["1RK", "1", "1.5", "2", "2.5", "3", "3.5", "4"];
 const FURNISHING_VALUES = ["Unfurnished", "Semi-furnished", "Fully furnished"];
@@ -77,7 +76,7 @@ const storage = createStorage(DATA_DIR);
 // ---------- seed: data.js is the demo source. Loaded once into the db (status live). ----------
 function loadSeed() {
   const src = fs.readFileSync(path.join(APP_DIR, "data.js"), "utf8");
-  return vm.runInNewContext(src + "\n;({ SEED_LISTINGS, LANDMARKS, CITY_CENTERS })", {});
+  return vm.runInNewContext(src + "\n;({ SEED_LISTINGS, LANDMARKS })", {});
 }
 function seedListings() {
   const { SEED_LISTINGS } = loadSeed();
@@ -302,7 +301,7 @@ function fail(status, msg, extra) { return Object.assign(new Error(msg), { statu
 
 function parseListingFields(body) {
   const f = {
-    title: str(body.title, 90), city: str(body.city, 20), locality: str(body.locality, 60),
+    title: str(body.title, 90), city: str(body.city, 60), locality: str(body.locality, 60),
     lat: Number(body.lat), lng: Number(body.lng), bhk: str(body.bhk, 4),
     bathrooms: Number(body.bathrooms), area_sqm: Number(body.area_sqm),
     balcony: body.balcony === true || body.balcony === "yes", rent: Number(body.rent),
@@ -310,7 +309,7 @@ function parseListingFields(body) {
     description: str(body.description, 600)
   };
   if (!f.title) throw fail(400, "Title is required");
-  if (CITIES.indexOf(f.city) === -1) throw fail(400, "Pick one of the four cities");
+  if (!f.city) throw fail(400, "Type the city or town the place is in");
   if (!f.locality) throw fail(400, "Locality is required");
   if (!(f.lat >= 6 && f.lat <= 37 && f.lng >= 68 && f.lng <= 98)) throw fail(400, "Pin the location on the map");
   if (BHK_VALUES.indexOf(f.bhk) === -1) throw fail(400, "Pick the BHK type");
@@ -361,8 +360,8 @@ async function handleApi(req, res, url) {
 
   // ----- public listings
   if (m === "GET" && p === "/api/listings") {
-    const city = url.searchParams.get("city");
-    const rows = db.filter("listings", (l) => l.status === "live" && (!city || l.city === city) && (SHOW_SAMPLES || l.source !== "seed"));
+    // India-wide: no city gate. The client narrows by map view or distance.
+    const rows = db.filter("listings", (l) => l.status === "live" && (SHOW_SAMPLES || l.source !== "seed"));
     return sendJson(res, 200, { listings: rows.map(publicListing) });
   }
   if (m === "GET" && parts.length === 3 && parts[1] === "listings") {

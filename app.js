@@ -10,7 +10,7 @@
   const CREDIT_RUPEES = 10, FREE_CREDITS = 10;
   const SQM_TO_SQFT = 10.7639;
   const state = {
-    city: "Bangalore", listings: [], ref: null, user: null, credits: 0,
+    listings: [], ref: null, user: null, credits: 0,
     selectedId: null, draft: null, pinLatLng: null, authMode: "login", gateNext: null
   };
 
@@ -53,7 +53,9 @@
   }
 
   // ---------- map ----------
-  const map = L.map("map", { zoomControl: false }).setView([CITY_CENTERS.Bangalore.lat, CITY_CENTERS.Bangalore.lng], 12);
+  // India-wide start: whole country in view until the visitor's location is known.
+  const INDIA_VIEW = { lat: 22.5, lng: 79.0, zoom: 5 };
+  const map = L.map("map", { zoomControl: false }).setView([INDIA_VIEW.lat, INDIA_VIEW.lng], INDIA_VIEW.zoom);
   L.control.zoom({ position: "bottomright" }).addTo(map);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -104,15 +106,18 @@
     });
   }
   map.on("zoomend", () => { if (visible.length) renderMap(); });
-  function fitVisible() {
-    if (!visible.length) return;
-    map.fitBounds(L.latLngBounds(visible.map((l) => [l.lat, l.lng])), { padding: [36, 36], maxZoom: 14 });
+  // Panning or zooming narrows the list to what is on screen.
+  map.on("moveend", () => refresh({ fit: false }));
+  function fitTo(list) {
+    if (!list.length) return;
+    map.fitBounds(L.latLngBounds(list.map((l) => [l.lat, l.lng])), { padding: [36, 36], maxZoom: 14, animate: false });
   }
 
   // ---------- listings ----------
+  // All live listings load once, India-wide. The map view decides what is shown.
   async function loadListings() {
     try {
-      const j = await api("/api/listings?city=" + encodeURIComponent(state.city));
+      const j = await api("/api/listings");
       state.listings = j.listings;
     } catch (e) {
       state.listings = []; notice("Could not load listings: " + e.message);
@@ -151,20 +156,23 @@
   }
   function refresh(opts) {
     const f = currentFilters(), sortBy = $("#sortSelect").value, ref = state.ref;
-    let items = state.listings.filter((l) => l.city === state.city && matchesFilters(l, f));
+    const matching = state.listings.filter((l) => matchesFilters(l, f));
+    if (opts && opts.fit) fitTo(matching);
+    const bounds = map.getBounds();
+    let items = matching.filter((l) => bounds.contains([l.lat, l.lng]));
     items.forEach((l) => { l._dist = ref ? haversineKm(ref, l) : null; });
     if (sortBy === "nearest" && ref) items.sort((a, b) => a._dist - b._dist);
     else if (sortBy === "rent_asc") items.sort((a, b) => a.rent - b.rent);
     else if (sortBy === "rent_desc") items.sort((a, b) => b.rent - a.rent);
     visible = items;
-    $("#countLabel").textContent = plural(items.length, "home") + " in " + state.city;
+    $("#countLabel").textContent = plural(items.length, "home") + " in view" +
+      (matching.length > items.length ? " · " + matching.length + " across India (zoom out to see them)" : "");
     $("#resetFilters").hidden = !filtersActive();
     $$("#filters .chip").forEach((el) => {
       const on = el.tagName === "SELECT" ? !!el.value && el.id !== "sortSelect" : (el.querySelector("input") ? el.querySelector("input").checked : false);
       el.classList.toggle("on", on);
     });
     renderCards(); renderMap();
-    if (opts && opts.fit) fitVisible();
   }
 
   function renderCards() {
@@ -434,19 +442,20 @@
   $$("[data-close]").forEach((b) => b.addEventListener("click", () => closeView(b.dataset.close)));
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") $$(".sheet, .modal").forEach((el) => { if (!el.hidden) closeView(el.id); }); });
 
-  // ---------- search (area or landmark, client side) ----------
-  function allPlaces(city) {
+  // ---------- search (area or landmark, across all seed data, India-wide) ----------
+  function allPlaces() {
     const places = [], seen = new Set();
-    SEED_LISTINGS.filter((l) => l.city === city).forEach((l) => {
-      if (!seen.has(l.locality)) { seen.add(l.locality); places.push({ name: l.locality, kind: "Area", lat: l.lat, lng: l.lng }); }
+    SEED_LISTINGS.forEach((l) => {
+      const key = l.locality.toLowerCase() + "|" + l.city.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); places.push({ name: l.locality, kind: "Area", sub: l.city, lat: l.lat, lng: l.lng }); }
     });
-    LANDMARKS.filter((p) => p.city === city).forEach((p) => places.push({ name: p.name, kind: "Landmark", lat: p.lat, lng: p.lng }));
+    LANDMARKS.forEach((p) => places.push({ name: p.name, kind: "Landmark", sub: p.city, lat: p.lat, lng: p.lng }));
     return places;
   }
   function suggestions(q) {
     const s = q.trim().toLowerCase();
     if (!s) return [];
-    const pool = allPlaces(state.city);
+    const pool = allPlaces();
     const starts = pool.filter((p) => p.name.toLowerCase().startsWith(s));
     const contains = pool.filter((p) => !starts.includes(p) && p.name.toLowerCase().includes(s));
     return starts.concat(contains).slice(0, 7);
@@ -455,7 +464,7 @@
     const items = suggestions($("#searchInput").value);
     const ul = $("#suggest");
     if (!items.length) { ul.hidden = true; ul.innerHTML = ""; return; }
-    ul.innerHTML = items.map((p, i) => '<li role="option" data-i="' + i + '"><span>' + esc(p.name) + '</span><span class="sg-kind">' + p.kind + "</span></li>").join("");
+    ul.innerHTML = items.map((p, i) => '<li role="option" data-i="' + i + '"><span>' + esc(p.name) + '</span><span class="sg-kind">' + esc(p.sub) + "</span></li>").join("");
     ul.hidden = false;
     $$("#suggest li").forEach((li) => li.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -467,16 +476,16 @@
     state.ref = { lat: p.lat, lng: p.lng, label: p.name };
     placeRefMarker();
     notice("Sorted by distance from " + p.name + ".");
-    refresh({ fit: false });
     map.setView([p.lat, p.lng], 14);
+    refresh({ fit: false });
   }
   function doSearch() {
     $("#suggest").hidden = true;
     const q = $("#searchInput").value.trim();
     if (!q) { notice(""); state.ref = null; placeRefMarker(); refresh({ fit: true }); return; }
-    const hit = suggestions(q)[0] || allPlaces(state.city).find((p) => p.name.toLowerCase() === q.toLowerCase());
+    const hit = suggestions(q)[0] || allPlaces().find((p) => p.name.toLowerCase() === q.toLowerCase());
     if (hit) return applyPlace(hit);
-    notice('No match for "' + q + '" in ' + state.city + ". Try Indiranagar, Bandra or Powai.");
+    notice('No match for "' + q + '". Try Indiranagar, Bandra, Connaught Place or Salt Lake.');
   }
   $("#searchInput").addEventListener("input", renderSuggest);
   $("#searchInput").addEventListener("blur", () => setTimeout(() => { $("#suggest").hidden = true; }, 150));
@@ -498,26 +507,15 @@
       if (userMarker) map.removeLayer(userMarker);
       userMarker = L.marker([p.lat, p.lng], { icon: L.divIcon({ className: "", html: '<div class="pin user"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }) }).addTo(map);
       placeRefMarker();
-      const near = Object.keys(CITY_CENTERS).sort((a, b) => haversineKm(p, CITY_CENTERS[a]) - haversineKm(p, CITY_CENTERS[b]))[0];
-      if (near !== state.city && haversineKm(p, CITY_CENTERS[near]) < 60) setCity(near, { keepRef: true });
       notice("Sorted by distance from you.");
-      refresh({ fit: false }); map.setView([p.lat, p.lng], 14);
+      map.setView([p.lat, p.lng], 14);
+      refresh({ fit: false });
     }, (err) => {
       notice((err && err.code === 1 ? "Location permission was denied." : "Could not get your location.") + " You can still search by area name.");
     }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
   }
   $("#locBtn").addEventListener("click", useMyLocation);
 
-  async function setCity(city, opts) {
-    opts = opts || {};
-    state.city = city;
-    $$(".city-btn").forEach((b) => b.classList.toggle("active", b.dataset.city === city));
-    if (!opts.keepRef) { state.ref = null; placeRefMarker(); notice(""); }
-    map.setView([CITY_CENTERS[city].lat, CITY_CENTERS[city].lng], 12);
-    await loadListings();
-    refresh({ fit: true });
-  }
-  $$(".city-btn").forEach((b) => b.addEventListener("click", () => setCity(b.dataset.city)));
   ["#bhkFilter", "#rentFilter", "#furnFilter", "#balconyFilter", "#verifiedFilter", "#sortSelect"].forEach((s) => $(s).addEventListener("change", () => refresh({ fit: false })));
   $("#resetFilters").addEventListener("click", () => {
     ["#bhkFilter", "#rentFilter", "#furnFilter", "#balconyFilter"].forEach((s) => { $(s).value = ""; });
@@ -672,8 +670,7 @@
   let pickMap = null, pickMarker = null, currentDraftId = null;
   function initPickMap() {
     if (pickMap) { pickMap.invalidateSize(); return; }
-    const c = CITY_CENTERS[$("#postForm [name=city]").value || state.city];
-    pickMap = L.map("pickMap", { zoomControl: true }).setView([c.lat, c.lng], 13);
+    pickMap = L.map("pickMap", { zoomControl: true }).setView([INDIA_VIEW.lat, INDIA_VIEW.lng], INDIA_VIEW.zoom);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(pickMap);
     pickMap.on("click", (e) => {
       state.pinLatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
@@ -696,9 +693,14 @@
     $("#formError").hidden = true;
     openView("postView"); initPickMap(); loadMyListings(); loadPromo();
   }
-  $("#postForm [name=city]").addEventListener("change", (e) => {
-    if (e.target.value && pickMap) { const c = CITY_CENTERS[e.target.value]; pickMap.setView([c.lat, c.lng], 13); }
-  });
+  // Free-text city/town with suggestions from the landmark + seed list (any text is accepted).
+  (function wireCityInput() {
+    const input = $("#postForm [name=city]");
+    const dl = $("#cityList");
+    if (!input || !dl) return;
+    const names = Array.from(new Set(SEED_LISTINGS.map((l) => l.city).concat(LANDMARKS.map((p) => p.city)))).sort();
+    dl.innerHTML = names.map((n) => '<option value="' + esc(n) + '"></option>').join("");
+  })();
   $("#postForm [name=area_sqm]").addEventListener("input", (e) => {
     const sqm = Number(e.target.value);
     $("#areaNote").textContent = sqm > 0 ? "≈ " + Math.round(sqm * SQM_TO_SQFT) + " sq ft" : "";
@@ -759,7 +761,7 @@
     if (!video) return showError("Add a video of the place.");
     if (!videoOk) return showError("The video could not be checked. Pick a video under " + MAX_VIDEO_SECONDS + " seconds.");
     if (!get("title")) return showError("Add a title.");
-    if (!get("city")) return showError("Pick a city.");
+    if (!get("city")) return showError("Type the city or town the place is in.");
     if (!get("locality")) return showError("Add the locality.");
     if (!state.pinLatLng) return showError("Drop the pin on your building on the map.");
     if (!get("rent")) return showError("Enter the monthly rent.");
@@ -834,10 +836,20 @@
   }
 
   // ---------- boot ----------
+  // Visitor's spot (if they allow it) centres the map at city zoom. Otherwise the map fits all listings across India.
+  function visitorSpot() {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) return resolve(null);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve(null),
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
+      );
+    });
+  }
   (async function boot() {
-    await restoreSession();
-    await handlePayuReturn();
-    await loadListings();
-    refresh({ fit: true });
+    const [, , , spot] = await Promise.all([restoreSession(), handlePayuReturn(), loadListings(), visitorSpot()]);
+    if (spot) map.setView([spot.lat, spot.lng], 12);
+    refresh({ fit: !spot });
   })();
 })();
