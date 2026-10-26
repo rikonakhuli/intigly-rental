@@ -20,6 +20,7 @@
     <div id="accountArea" class="account"></div>
   </header>
 
+  <main class="layout">
   <div class="finder">
     <div class="searchbar">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -39,16 +40,16 @@
         <option value="2.5">2.5 BHK</option>
         <option value="3">3+ BHK</option>
       </select>
-      <select id="rentFilter" class="chip" aria-label="Budget">
-        <option value="">Budget: any</option>
+      <select id="rentFilter" class="chip" aria-label="Rent">
+        <option value="">Rent: any</option>
         <option value="0:15000">Under ₹15k</option>
         <option value="0:25000">Under ₹25k</option>
         <option value="0:50000">Under ₹50k</option>
         <option value="0:100000">Under ₹1L</option>
         <option value="100000:">₹1L and above</option>
       </select>
-      <select id="furnFilter" class="chip" aria-label="Furnishing">
-        <option value="">Furnishing: any</option>
+      <select id="furnFilter" class="chip" aria-label="Furnished">
+        <option value="">Furnished: any</option>
         <option value="Unfurnished">Unfurnished</option>
         <option value="Semi-furnished">Semi-furnished</option>
         <option value="Fully furnished">Fully furnished</option>
@@ -71,8 +72,6 @@
     </div>
     <div id="notice" class="notice" hidden></div>
   </div>
-
-  <main class="layout">
     <div id="map" aria-label="Map of rental listings"></div>
     <section id="cardList" class="cards" aria-label="Listings"></section>
   </main>

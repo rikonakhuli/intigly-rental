@@ -64,20 +64,49 @@
   function pinIcon(l, selected) {
     return L.divIcon({
       className: "",
-      html: '<div class="pin' + (selected ? " sel" : "") + '">' + esc(rentK(l.rent)) + "</div>",
+      html: '<div class="pin' + (selected ? " sel" : "") + '" title="' + esc(l.title) + '">' + esc(rentK(l.rent)) + "</div>",
       iconSize: [0, 0], iconAnchor: [0, 0]
     });
   }
+  // Declutter: price pills that would overlap an already-placed pill are nudged to the nearest free spot on a small ring.
+  // Display-only: the real lat/lng on each listing is unchanged. Recomputed on zoom.
+  function declutteredLatLngs(list) {
+    const W = 66, H = 34; // approx pill box, anchored at its bottom-centre
+    const placed = [];
+    const clash = (x, y) => placed.some((p) => Math.abs(p.x - x) < W && Math.abs(p.y - y) < H);
+    const out = new Map();
+    list.forEach((l) => {
+      const pt = map.latLngToContainerPoint([l.lat, l.lng]);
+      let x = pt.x, y = pt.y;
+      if (clash(x, y)) {
+        let found = false;
+        for (const r of [40, 70, 100, 130]) {
+          for (let k = 0; k < 8 && !found; k++) {
+            const ang = (2 * Math.PI * k) / 8 - Math.PI / 2;
+            const cx = pt.x + Math.cos(ang) * r, cy = pt.y + Math.sin(ang) * r * 0.7;
+            if (!clash(cx, cy)) { x = cx; y = cy; found = true; }
+          }
+          if (found) break;
+        }
+      }
+      placed.push({ x, y });
+      const ll = map.containerPointToLatLng([x, y]);
+      out.set(l.id, [ll.lat, ll.lng]);
+    });
+    return out;
+  }
   function renderMap() {
     markerLayer.clearLayers();
+    const pos = declutteredLatLngs(visible);
     visible.forEach((l) => {
-      L.marker([l.lat, l.lng], { icon: pinIcon(l, l.id === state.selectedId), title: l.title, zIndexOffset: l.id === state.selectedId ? 500 : 0 })
+      L.marker(pos.get(l.id), { icon: pinIcon(l, l.id === state.selectedId), title: l.title, zIndexOffset: l.id === state.selectedId ? 500 : 0 })
         .on("click", () => selectListing(l.id, { fromMap: true })).addTo(markerLayer);
     });
   }
+  map.on("zoomend", () => { if (visible.length) renderMap(); });
   function fitVisible() {
     if (!visible.length) return;
-    map.fitBounds(L.latLngBounds(visible.map((l) => [l.lat, l.lng])), { padding: [36, 36], maxZoom: 14 });
+    map.fitBounds(L.latLngBounds(visible.map((l) => [l.lat, l.lng])), { paddingTopLeft: [24, 150], paddingBottomRight: [24, 250], maxZoom: 14 });
   }
 
   // ---------- listings ----------
@@ -182,9 +211,10 @@
   function openDetail(l) {
     const photos = l.photos || [];
     const gallery = photos.length
-      ? '<div class="gallery">' + photos.slice(0, 4).map((u, i) => '<img class="' + (i === 0 ? "big" : "") + '" src="' + esc(u) + '" alt="' + esc(l.title) + '" />').join("") + "</div>" +
-        (photos.length > 1 ? '<span class="gallery-count">' + photos.length + " photos</span>" : "")
-      : '<div class="gallery"><div class="ph">No photos yet</div></div>';
+      ? '<div class="hero"><img src="' + esc(photos[0]) + '" alt="' + esc(l.title) + '" />' +
+        (photos.length > 1 ? '<span class="hero-count">1 / ' + photos.length + "</span>" : "") + "</div>" +
+        (photos.length > 1 ? '<div class="thumbs">' + photos.slice(1, 8).map((u) => '<img src="' + esc(u) + '" alt="" loading="lazy" />').join("") + "</div>" : "")
+      : '<div class="hero"><div class="ph">No photos yet</div></div>';
     const video = l.videos && l.videos.length
       ? '<div class="section-h">Video tour</div><div class="video-box"><video controls preload="metadata" src="' + esc(l.videos[0]) + '"></video></div>'
       : "";
@@ -203,13 +233,12 @@
         '<h1 id="detailTitle">' + esc(l.title) + "</h1>" +
         '<div class="loc">' + esc(l.locality) + ", " + esc(l.city) + dist + "</div>" +
         verifiedLine +
-        '<div class="spec-grid">' +
-          specCell("BHK", esc(bhkShort(l.bhk))) +
-          specCell("Bathrooms", esc(l.bathrooms)) +
-          specCell("Area", l.area_sqm + " m² · " + sqft + " ft²") +
-          specCell("Balcony", l.balcony ? "Yes" : "No") +
-          specCell("Furnishing", esc(l.furnishing)) +
-          specCell("Deposit", inr(l.deposit)) +
+        '<div class="chip-row spec-chips">' +
+          '<span class="spec-chip">' + esc(bhkShort(l.bhk)) + "</span>" +
+          '<span class="spec-chip">' + esc(l.bathrooms) + (String(l.bathrooms) === "1" ? " bath" : " baths") + "</span>" +
+          '<span class="spec-chip">' + l.area_sqm + " m² · " + sqft + " ft²</span>" +
+          '<span class="spec-chip">' + (l.balcony ? "Balcony" : "No balcony") + "</span>" +
+          '<span class="spec-chip">' + esc(l.furnishing) + "</span>" +
         "</div>" +
         video +
         '<div class="section-h">Money</div>' +
@@ -507,7 +536,7 @@
   function updateAccount() {
     const a = $("#accountArea");
     if (!state.user) {
-      a.innerHTML = '<button class="btn primary small-btn" id="listBtn">List property</button>';
+      a.innerHTML = '<button class="btn primary small-btn" id="listBtn">List<span class="hide-sm"> property</span></button>';
       $("#listBtn").addEventListener("click", () => { if (state.user) openPost(); else openGate("signup", null, { owner: true }); });
       return;
     }
@@ -759,9 +788,28 @@
   }
 
   // ---------- boot ----------
+  function nearestCity(p) {
+    return Object.keys(CITY_CENTERS).sort((a, b) => haversineKm(p, CITY_CENTERS[a]) - haversineKm(p, CITY_CENTERS[b]))[0];
+  }
+  function detectCity() {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) return resolve("Bangalore");
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          const near = nearestCity(p);
+          resolve(haversineKm(p, CITY_CENTERS[near]) < 100 ? near : "Bangalore");
+        },
+        () => resolve("Bangalore"),
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }
+      );
+    });
+  }
   (async function boot() {
     await restoreSession();
     await handlePayuReturn();
+    const city = await detectCity();
+    if (city !== state.city) { state.city = city; $$(".city-btn").forEach((b) => b.classList.toggle("active", b.dataset.city === city)); map.setView([CITY_CENTERS[city].lat, CITY_CENTERS[city].lng], 12); }
     await loadListings();
     refresh({ fit: true });
   })();
