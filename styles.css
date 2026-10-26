@@ -93,6 +93,9 @@ select.chip { padding-right: 26px; appearance: none; background-image: linear-gr
 
 /* ---------- map + cards ---------- */
 .layout { display: flex; flex-direction: column; gap: 10px; padding-bottom: 16px; }
+/* Leaflet panes/controls use z-index 200-1000 and are absolutely positioned. Each map container must be its own
+   stacking context so those z-indexes stay inside the map and UI overlays (finder z20, sheets z60, cta z70, modal z80) stay on top. */
+.map-wrap, #map, .detail-map, .pick-map { position: relative; z-index: 0; isolation: isolate; }
 #map { order: 1; height: 46vh; min-height: 300px; border-radius: var(--r); border: 1px solid var(--line); margin: 0 12px; overflow: hidden; }
 .cards { order: 2; display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 4px 12px 8px; scrollbar-width: none; }
 .cards::-webkit-scrollbar { display: none; }
