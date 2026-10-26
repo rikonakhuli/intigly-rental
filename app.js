@@ -9,6 +9,7 @@
   const feeFor = (rent) => Math.round(Number(rent || 0) * FEE_RATE);
   const CREDIT_RUPEES = 10, FREE_CREDITS = 10;
   const SQM_TO_SQFT = 10.7639;
+  let detailMap = null;
   // Two pages from one codebase: "/" is the tenant map, "/agent" is the owner app (body.agent set by the server).
   const AGENT = document.body.classList.contains("agent");
   const state = {
@@ -330,8 +331,13 @@
     wireShare(l);
     loadReviews(l);
     openView("detailView");
+    // one detail map at a time: drop the previous instance before building the next so opens do not stack Leaflet containers
+    if (detailMap) { detailMap.remove(); detailMap = null; }
     setTimeout(() => {
-      const dm = L.map("detailMap", { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, touchZoom: false, boxZoom: false, keyboard: false, maxZoom: unlocked() ? 19 : state.freeCap }).setView([l.lat, l.lng], unlocked() ? 15 : Math.min(15, state.freeCap));
+      const el = document.getElementById("detailMap");
+      if (!el) return;
+      const dm = L.map(el, { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, touchZoom: false, boxZoom: false, keyboard: false, maxZoom: unlocked() ? 19 : state.freeCap }).setView([l.lat, l.lng], unlocked() ? 15 : Math.min(15, state.freeCap));
+      detailMap = dm;
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(dm);
       L.circleMarker([l.lat, l.lng], { radius: 9, color: "#fff", weight: 3, fillColor: "#0f766e", fillOpacity: 1 }).addTo(dm);
       dm.invalidateSize();
@@ -393,8 +399,9 @@
     $("#passStatus").textContent = "";
     openSheetView("passSheet");
   }
-  function openSheetView(id) { $("#" + id).classList.add("open"); document.body.style.overflow = "hidden"; $("#passBar").setAttribute("aria-expanded", "true"); }
-  function closeSheetView(id) { $("#" + id).classList.remove("open"); document.body.style.overflow = ""; $("#passBar").setAttribute("aria-expanded", "false"); }
+  // The main map's container is hidden under the sheet. Re-measure it on open and close so tiles and pins do not sit at a stale size.
+  function openSheetView(id) { $("#" + id).classList.add("open"); document.body.style.overflow = "hidden"; $("#passBar").setAttribute("aria-expanded", "true"); map.invalidateSize({ animate: false }); }
+  function closeSheetView(id) { $("#" + id).classList.remove("open"); document.body.style.overflow = ""; $("#passBar").setAttribute("aria-expanded", "false"); map.invalidateSize({ animate: false }); }
   $("#passCloseBtn").addEventListener("click", () => closeSheetView("passSheet"));
   // swipe up on the bottom bar, or tap it, opens the sheet. Swipe down on the sheet closes it.
   (function wirePassBar() {
@@ -404,10 +411,12 @@
     bar.addEventListener("touchend", (e) => { if (y0 !== null && y0 - e.changedTouches[0].clientY > 24) openPassSheet(); y0 = null; });
     bar.addEventListener("click", openPassSheet);
     bar.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPassSheet(); } });
+    // Only a downward drag that starts at the top of the sheet closes it. A swipe that scrolls the plan list does not.
     const sheet = $("#passSheet");
-    let s0 = null;
-    sheet.addEventListener("touchstart", (e) => { s0 = e.touches[0].clientY; }, { passive: true });
-    sheet.addEventListener("touchend", (e) => { if (s0 !== null && e.changedTouches[0].clientY - s0 > 60) closeSheetView("passSheet"); s0 = null; });
+    let s0 = null, atTop = false;
+    sheet.addEventListener("touchstart", (e) => { s0 = e.touches[0].clientY; atTop = sheet.scrollTop <= 0; }, { passive: true });
+    sheet.addEventListener("touchend", (e) => { if (s0 !== null && atTop && e.changedTouches[0].clientY - s0 > 60) closeSheetView("passSheet"); s0 = null; });
+    sheet.addEventListener("touchcancel", () => { s0 = null; });
   })();
   // the three-dot menu
   (function wireMenu() {
