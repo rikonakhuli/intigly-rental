@@ -42,6 +42,45 @@ async function waitUp() {
 // Smallest valid PNG and a stand-in mp4 blob. The server validates the type header and size; the file is never decoded.
 const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000154a24f5a0000000049454e44ae426082", "hex");
 
+// Boots a server with or without PayU config, signs up a renter, orders a 7d pass and simulates it.
+async function payuSuite({ label, payu, actionUrl, expectSimulate }) {
+  const port = 3900 + Math.floor(Math.random() * 90) + 100;
+  const base = "http://localhost:" + port;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rental-payu-"));
+  const env = Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dir, SHOW_SAMPLE_LISTINGS: "0", ADMIN_EMAIL: "admin@test.local", ADMIN_PASSWORD: "adminpass123" });
+  delete env.PAYU_MERCHANT_KEY; delete env.PAYU_MERCHANT_SALT; delete env.PAYU_BASE_URL; delete env.PUBLIC_BASE_URL;
+  if (payu) { env.PAYU_MERCHANT_KEY = "testkey"; env.PAYU_MERCHANT_SALT = "testsalt"; env.PAYU_BASE_URL = actionUrl; }
+  const srv = spawn(process.execPath, [path.join(ROOT, "server.js")], { env, cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
+  const c = async (method, url, body, cookie) => {
+    const headers = {}; if (body !== undefined) headers["Content-Type"] = "application/json"; if (cookie) headers.Cookie = cookie;
+    const r = await fetch(base + url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual" });
+    const sc = r.headers.get("set-cookie") || ""; const text = await r.text(); let json = {}; try { json = JSON.parse(text); } catch (e) {}
+    return { status: r.status, json, cookie: sc ? sc.split(";")[0] : null };
+  };
+  try {
+    for (let i = 0; i < 60; i++) { try { if ((await fetch(base + "/api/health")).ok) break; } catch (e) {} await new Promise((r) => setTimeout(r, 150)); }
+    const su = await c("POST", "/api/auth/signup", { email: "payu" + port + "@test.local", password: "password123", name: "Pay Test", role: "renter" });
+    ok(label + ": renter signup ok", su.status === 200 || su.status === 201, su.status);
+    const ck = su.cookie;
+    const order = await c("POST", "/api/pass/order", { plan: "7d" }, ck);
+    const notSetUp = order.json && /not set up/i.test(String(order.json.error || order.json.message || ""));
+    ok(label + ": pass order not refused as 'not set up'", order.status === 200 && !notSetUp, order.json);
+    const txnid = order.json && order.json.payment && order.json.payment.params && order.json.payment.params.txnid;
+    ok(label + ": pass order has txnid", !!txnid, order.json);
+    const sim = await c("POST", "/api/payu/simulate", { txnid: txnid || "" }, ck);
+    if (expectSimulate) {
+      ok(label + ": simulate refused (" + expectSimulate + ")", sim.status === expectSimulate, sim.status);
+    } else {
+      ok(label + ": simulate activates pass", sim.status === 200 && sim.json.status === "paid" && sim.json.pass && sim.json.pass.active === true, sim.json);
+    }
+  } catch (e) {
+    failed++; console.log("FAIL " + label + " harness error: " + (e && e.stack || e));
+  } finally {
+    srv.kill();
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+  }
+}
+
 (async () => {
   const env = Object.assign({}, process.env, {
     PORT: String(PORT), DATA_DIR, SHOW_SAMPLE_LISTINGS: "0",
@@ -311,6 +350,11 @@ const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000
     // (checked in the separate configured run below)
     const appText2 = appText;
     ok("app.js buy button wired to Weekly Pass", appText2.includes("Buy Weekly Pass"), null);
+
+    // PayU not configured: order + simulate must still activate the pass.
+    await payuSuite({ label: "no PayU config", payu: false });
+    // PayU configured against the live host: simulate must be refused.
+    await payuSuite({ label: "PayU configured, live host", payu: true, actionUrl: "https://secure.payu.in/_payment", expectSimulate: 404 });
   } catch (e) {
     failed++; console.log("FAIL harness error: " + (e && e.stack || e));
   } finally {

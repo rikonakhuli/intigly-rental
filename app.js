@@ -440,8 +440,15 @@
     btn.disabled = true; $("#passStatus").textContent = "Creating order...";
     try {
       const j = await api("/api/pass/order", { plan: state.selectedPlan });
-      $("#passStatus").textContent = "Redirecting to Google Pay...";
       state.pendingTxn = j.payment.params.txnid;
+      if (j.payment.simulated) {
+        // PayU not configured: the order is recorded, so the test-mode button fulfils it. No redirect.
+        $("#passStatus").textContent = "Order created. Tap Payment successful (test mode).";
+        $("#passSimBtn").hidden = false;
+        btn.disabled = false;
+        return;
+      }
+      $("#passStatus").textContent = "Redirecting to Google Pay...";
       postToPayu(j.payment);
     } catch (e) { $("#passStatus").textContent = "Could not start payment: " + e.message; btn.disabled = false; }
   });

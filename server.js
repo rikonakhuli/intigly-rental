@@ -232,8 +232,15 @@ function reviewView(r) {
 function payuBase(req) { return PUBLIC_BASE_URL || ("http://" + (req.headers.host || "localhost")); }
 // Writes the order row and returns the form params the browser POSTs to PayU.
 function createPayuPayment(req, user, kind, ref, amountPaise, quantity, productinfo, opts) {
-  if (!PAYU_KEY || !PAYU_SALT) throw fail(503, "Payments are not set up yet");
   const txnid = "T" + crypto.randomBytes(12).toString("hex").toUpperCase(); // 25 chars, new per attempt
+  // PayU not configured: still record the order (status created) so test-mode simulate can fulfil it.
+  // No checkout form is returned; the browser must not post anywhere.
+  if (!PAYU_KEY || !PAYU_SALT) {
+    const extraU = opts || {};
+    db.insert("orders", { id: newId("O"), kind, user_id: user.id, ref: kind === "listing" ? ref : null, quantity, plan: extraU.plan || null,
+      amount: amountPaise, payu_txnid: txnid, status: "created", payu_mihpayid: null, created_at: new Date().toISOString() });
+    return { action: "", params: { txnid }, simulated: true };
+  }
   const base = payuBase(req);
   const p = {
     key: PAYU_KEY, txnid, amount: rupees(amountPaise), productinfo,
