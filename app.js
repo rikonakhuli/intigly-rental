@@ -9,8 +9,10 @@
   const feeFor = (rent) => Math.round(Number(rent || 0) * FEE_RATE);
   const CREDIT_RUPEES = 10, FREE_CREDITS = 10;
   const SQM_TO_SQFT = 10.7639;
+  // Two pages from one codebase: "/" is the tenant map, "/agent" is the owner app (body.agent set by the server).
+  const AGENT = document.body.classList.contains("agent");
   const state = {
-    listings: [], ref: null, user: null, credits: 0,
+    listings: [], ref: null, user: null, credits: 0, pass: null, freeCap: 12, plans: [], selectedPlan: null, testMode: false,
     selectedId: null, draft: null, pinLatLng: null, authMode: "login", gateNext: null
   };
 
@@ -55,7 +57,9 @@
   // ---------- map ----------
   // India-wide start: whole country in view until the visitor's location is known.
   const INDIA_VIEW = { lat: 22.5, lng: 79.0, zoom: 5 };
-  const map = L.map("map", { zoomControl: false }).setView([INDIA_VIEW.lat, INDIA_VIEW.lng], INDIA_VIEW.zoom);
+  // Internal max is 19. Visitors without an active pass are held at state.freeCap by the zoom gate below.
+  const map = L.map("map", { zoomControl: false, maxZoom: 19 }).setView([INDIA_VIEW.lat, INDIA_VIEW.lng], INDIA_VIEW.zoom);
+  const unlocked = () => !!(state.pass && state.pass.active);
   L.control.zoom({ position: "bottomright" }).addTo(map);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -97,7 +101,15 @@
     });
     return out;
   }
+  // Free view: a plain blue dot with a white stroke per listing. No price, no details.
+  function renderMapLocked() {
+    markerLayer.clearLayers();
+    visible.forEach((l) => {
+      L.circleMarker([l.lat, l.lng], { radius: 7, color: "#ffffff", weight: 2.5, fillColor: "#2563eb", fillOpacity: 1, interactive: false }).addTo(markerLayer);
+    });
+  }
   function renderMap() {
+    if (!unlocked()) return renderMapLocked();
     markerLayer.clearLayers();
     const pos = declutteredLatLngs(visible);
     visible.forEach((l) => {
@@ -105,12 +117,31 @@
         .on("click", () => selectListing(l.id, { fromMap: true })).addTo(markerLayer);
     });
   }
-  map.on("zoomend", () => { if (visible.length) renderMap(); });
+  // Zoom gate: without a pass the map cannot go past the free cap. The + icon, pinch and wheel all land here.
+  // Blocked zooms snap back and show the "paid plan required" overlay.
+  function applyZoomCap() {
+    const cap = unlocked() ? 19 : state.freeCap;
+    map.setMaxZoom(cap);
+    if (!unlocked() && map.getZoom() > cap) map.setZoom(cap, { animate: false });
+  }
+  function showZoomGate(on) {
+    const g = $("#zoomGate");
+    if (g) g.hidden = !on;
+  }
+  map.on("zoomend", () => {
+    if (!unlocked() && map.getZoom() >= state.freeCap) {
+      if (map.getZoom() > state.freeCap) map.setZoom(state.freeCap, { animate: false });
+      showZoomGate(true);
+    }
+    if (visible.length) renderMap();
+  });
+  map.on("zoomstart", () => { if (!unlocked() && map.getZoom() >= state.freeCap) showZoomGate(true); });
+  map.on("movestart", () => { if (!unlocked()) showZoomGate(false); });
   // Panning or zooming narrows the list to what is on screen.
   map.on("moveend", () => refresh({ fit: false }));
   function fitTo(list) {
     if (!list.length) return;
-    map.fitBounds(L.latLngBounds(list.map((l) => [l.lat, l.lng])), { padding: [36, 36], maxZoom: 14, animate: false });
+    map.fitBounds(L.latLngBounds(list.map((l) => [l.lat, l.lng])), { padding: [36, 36], maxZoom: unlocked() ? 14 : state.freeCap, animate: false });
   }
 
   // ---------- listings ----------
@@ -119,6 +150,7 @@
     try {
       const j = await api("/api/listings");
       state.listings = j.listings;
+      if (j.pass) setPass(j.pass);
     } catch (e) {
       state.listings = []; notice("Could not load listings: " + e.message);
     }
@@ -156,7 +188,9 @@
   }
   function refresh(opts) {
     const f = currentFilters(), sortBy = $("#sortSelect").value, ref = state.ref;
-    const matching = state.listings.filter((l) => matchesFilters(l, f));
+    // Free view: listings are only dots. Filters and cards need details, so they wait for the pass.
+    const locked = !unlocked();
+    const matching = locked ? state.listings.slice() : state.listings.filter((l) => matchesFilters(l, f));
     if (opts && opts.fit) fitTo(matching);
     const bounds = map.getBounds();
     let items = matching.filter((l) => bounds.contains([l.lat, l.lng]));
@@ -165,6 +199,15 @@
     else if (sortBy === "rent_asc") items.sort((a, b) => a.rent - b.rent);
     else if (sortBy === "rent_desc") items.sort((a, b) => b.rent - a.rent);
     visible = items;
+    if (locked) {
+      $("#countLabel").textContent = plural(items.length, "home") + " in view · get a pass for prices and details";
+      $("#cardList").hidden = true;
+      $("#filters") && ($("#filters").hidden = true);
+      renderMap();
+      return;
+    }
+    $("#cardList").hidden = false;
+    $("#filters") && ($("#filters").hidden = false);
     $("#countLabel").textContent = plural(items.length, "home") + " in view" +
       (matching.length > items.length ? " · " + matching.length + " across India (zoom out to see them)" : "");
     $("#resetFilters").hidden = !filtersActive();
@@ -218,7 +261,7 @@
 
   // Always reload the detail from the server so the photo/video/phone lock is the server's call.
   function openDetailById(id) {
-    api("/api/listings/" + encodeURIComponent(id)).then((j) => { state.passOn = !!(j.pass && j.pass.active); openDetail(j.listing); }).catch(() => toast("That listing is not available"));
+    api("/api/listings/" + encodeURIComponent(id)).then((j) => { if (j.pass) setPass(j.pass); openDetail(j.listing); }).catch(() => toast("That listing is not available"));
   }
   function openDetail(l) {
     const photos = l.photos || [];
@@ -237,6 +280,7 @@
       ? '<div class="verified-line">✓ Verified listing · owner confirmed, no broker</div>'
       : (l.sample ? '<div class="verified-line" style="color:var(--muted)">Sample listing for preview</div>' : "");
     const ownerName = l.owner_first_name ? esc(l.owner_first_name) : "Owner";
+    const mapLocked = locked; // detail map stays below the lock card (CSS z-index), and free users never see the price dots there
 
     $("#detailBody").innerHTML =
       gallery +
@@ -287,7 +331,7 @@
     loadReviews(l);
     openView("detailView");
     setTimeout(() => {
-      const dm = L.map("detailMap", { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false }).setView([l.lat, l.lng], 15);
+      const dm = L.map("detailMap", { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, touchZoom: false, boxZoom: false, keyboard: false, maxZoom: unlocked() ? 19 : state.freeCap }).setView([l.lat, l.lng], unlocked() ? 15 : Math.min(15, state.freeCap));
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(dm);
       L.circleMarker([l.lat, l.lng], { radius: 9, color: "#fff", weight: 3, fillColor: "#0f766e", fillOpacity: 1 }).addTo(dm);
       dm.invalidateSize();
@@ -300,7 +344,7 @@
     if (!box) return;
     lbl.innerHTML = "<b>" + inr(l.rent) + "</b>/ month · deposit " + inr(l.deposit);
     if (l.sample || !l.has_phone) {
-      box.innerHTML = '<button class="btn primary" disabled>Owner contact n/a</button>';
+      box.innerHTML = "";
       lbl.innerHTML = "<b>Sample listing</b>No owner contact is attached";
       return;
     }
@@ -337,17 +381,96 @@
     '</div>';
   }
   // Pass purchase: the server computes the amount and builds the PayU form. The browser only posts it.
-  async function buyPass() {
-    if (!state.user) { openGate("login", () => buyPass()); return; }
+  async function buyPass() { openPassSheet(); }
+
+  // ---------- pass sheet (7-day and 1-year, Google Pay only) ----------
+  function openPassSheet() {
+    if (!state.user) { openGate("login", () => openPassSheet()); return; }
     if (state.user.role !== "renter") { toast("The pass is for renter accounts."); return; }
-    try {
-      const j = await api("/api/pass/order", {});
-      if (j.pass) state.passPrice = j.pass.price_rupees;
-      postToPayu(j.payment);
-    } catch (e) { toast("Could not start payment: " + e.message, 3600); }
+    state.selectedPlan = null;
+    document.querySelectorAll("#planList .plan").forEach((b) => b.classList.remove("on"));
+    $("#passPayBtn").hidden = true; $("#passSimBtn").hidden = true;
+    $("#passStatus").textContent = "";
+    openSheetView("passSheet");
   }
+  function openSheetView(id) { $("#" + id).classList.add("open"); document.body.style.overflow = "hidden"; $("#passBar").setAttribute("aria-expanded", "true"); }
+  function closeSheetView(id) { $("#" + id).classList.remove("open"); document.body.style.overflow = ""; $("#passBar").setAttribute("aria-expanded", "false"); }
+  $("#passCloseBtn").addEventListener("click", () => closeSheetView("passSheet"));
+  // swipe up on the bottom bar, or tap it, opens the sheet. Swipe down on the sheet closes it.
+  (function wirePassBar() {
+    const bar = $("#passBar");
+    let y0 = null;
+    bar.addEventListener("touchstart", (e) => { y0 = e.touches[0].clientY; }, { passive: true });
+    bar.addEventListener("touchend", (e) => { if (y0 !== null && y0 - e.changedTouches[0].clientY > 24) openPassSheet(); y0 = null; });
+    bar.addEventListener("click", openPassSheet);
+    bar.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPassSheet(); } });
+    const sheet = $("#passSheet");
+    let s0 = null;
+    sheet.addEventListener("touchstart", (e) => { s0 = e.touches[0].clientY; }, { passive: true });
+    sheet.addEventListener("touchend", (e) => { if (s0 !== null && e.changedTouches[0].clientY - s0 > 60) closeSheetView("passSheet"); s0 = null; });
+  })();
+  // the three-dot menu
+  (function wireMenu() {
+    const btn = $("#menuBtn"), menu = $("#menu");
+    if (!btn) return;
+    btn.addEventListener("click", (e) => { e.stopPropagation(); const open = menu.hidden; menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); });
+    document.addEventListener("click", () => { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); });
+  })();
+  // zoom gate overlay CTA opens the pass sheet
+  $("#zoomGateBtn").addEventListener("click", () => { $("#zoomGate").hidden = true; openPassSheet(); });
+  document.querySelectorAll("#planList .plan").forEach((b) => b.addEventListener("click", () => {
+    state.selectedPlan = b.dataset.plan;
+    document.querySelectorAll("#planList .plan").forEach((x) => x.classList.toggle("on", x === b));
+    $("#passPayBtn").hidden = false;
+    $("#passSimBtn").hidden = !state.testMode;
+    $("#passStatus").textContent = "";
+  }));
+  $("#passPayBtn").addEventListener("click", async () => {
+    if (!state.selectedPlan) return;
+    const btn = $("#passPayBtn");
+    btn.disabled = true; $("#passStatus").textContent = "Creating order...";
+    try {
+      const j = await api("/api/pass/order", { plan: state.selectedPlan });
+      $("#passStatus").textContent = "Redirecting to Google Pay...";
+      state.pendingTxn = j.payment.params.txnid;
+      postToPayu(j.payment);
+    } catch (e) { $("#passStatus").textContent = "Could not start payment: " + e.message; btn.disabled = false; }
+  });
+  // Test mode: marks the pending pass order paid through the server, the same way the PayU callback does.
+  $("#passSimBtn").addEventListener("click", async () => {
+    const btn = $("#passSimBtn");
+    btn.disabled = true; $("#passStatus").textContent = "Simulating payment...";
+    try {
+      const j = await api("/api/payu/simulate", { txnid: state.pendingTxn || "" });
+      setPass(Object.assign({}, state.pass || {}, j.pass));
+      await refreshMe();
+      closeSheetView("passSheet");
+      toast("Payment successful. Weekly pass active.", 3600);
+      refresh({ fit: false });
+      if (state.selectedId) { const sel = state.listings.find((x) => x.id === state.selectedId); if (sel) openDetail(sel); }
+    } catch (e) { $("#passStatus").textContent = "Could not complete payment: " + e.message; }
+    finally { btn.disabled = false; }
+  });
   async function refreshMe() {
-    try { const j = await api("/api/me"); state.user = j.user; if (j.pass) state.passPrice = j.pass.price_rupees; updateAccount(); } catch (e) { /* keep current */ }
+    try { const j = await api("/api/me"); state.user = j.user; if (j.pass) setPass(j.pass); updateAccount(); } catch (e) { /* keep current */ }
+  }
+  // One place that stores the pass state the server sent. Unlock and relock both run through here.
+  function setPass(p) {
+    state.pass = p || null;
+    if (p) {
+      if (p.price_rupees) state.passPrice = p.price_rupees;
+      if (p.plans) state.plans = p.plans;
+      if (p.free_zoom_cap) state.freeCap = p.free_zoom_cap;
+      if (typeof p.test_mode === "boolean") state.testMode = p.test_mode;
+    }
+    applyZoomCap();
+    renderPassBar();
+  }
+  function renderPassBar() {
+    const sub = $("#passBarSub");
+    if (!sub) return;
+    if (unlocked()) sub.textContent = "pass active · " + plural(state.pass.days_left || 0, "day") + " left";
+    else sub.textContent = "unlock full zoom, prices and owner numbers";
   }
 
   async function revealCall(l) {
@@ -355,7 +478,7 @@
     if (btn) btn.disabled = true;
     try {
       const j = await api("/api/listings/" + encodeURIComponent(l.id) + "/reveal", {});
-      if (j.pass && state.user) { state.user.pass_active = true; state.user.pass_days_left = j.pass.days_left; }
+      if (j.pass && state.user) { state.user.pass_active = true; state.user.pass_days_left = j.pass.days_left; setPass(Object.assign({}, state.pass || {}, j.pass)); }
       updateAccount();
       $("#callBox").innerHTML = '<div class="call-done"><a class="btn primary" href="tel:' + esc(j.phone) + '">Call ' + esc(j.phone) + "</a>" +
         '<span class="muted small">Weekly Pass active' + (j.pass ? ", " + plural(j.pass.days_left, "day") + " left" : "") + ".</span></div>";
@@ -574,9 +697,22 @@
 
   function updateAccount() {
     const a = $("#accountArea");
+    if (AGENT) {
+      // Owner app: owners log in and post. Renters get a note, not the post flow.
+      if (!state.user) a.innerHTML = '<button class="btn primary small-btn" id="ownerLogBtn">Log in</button>';
+      else a.innerHTML = '<button class="link-btn" id="logoutBtn">Log out</button>';
+    }
+    renderOwnerHome();
+    if (!AGENT) {
+      if (!state.user) {
+        a.innerHTML = '<button class="btn ghost small-btn" id="loginTopBtn">Log in</button>';
+        $("#loginTopBtn").addEventListener("click", () => openGate("login"));
+        return;
+      }
+      if (state.user.role === "owner") { a.innerHTML = '<button class="link-btn" id="logoutBtn">Log out</button>'; $("#logoutBtn").addEventListener("click", logout); return; }
+    }
     if (!state.user) {
-      a.innerHTML = '<button class="btn primary small-btn" id="listBtn">List property</button>';
-      $("#listBtn").addEventListener("click", () => { if (state.user) openPost(); else openGate("signup", null, { owner: true }); });
+      if (AGENT) { $("#ownerLogBtn").addEventListener("click", () => openGate("login", null, { owner: true })); }
       return;
     }
     if (state.user.role === "renter") {
@@ -592,9 +728,25 @@
     }
     $("#logoutBtn").addEventListener("click", logout);
   }
+  // Owner app landing (/agent): log in, sign up, then post. Lives in the owner section of index.html.
+  function renderOwnerHome() {
+    const box = $("#ownerActions");
+    if (!box || !AGENT) return;
+    if (!state.user) {
+      box.innerHTML = '<button class="btn primary wide" id="ownerLoginBtn">Log in</button><button class="btn ghost wide" id="ownerSignupBtn">Create an owner account</button>';
+      $("#ownerLoginBtn").addEventListener("click", () => openGate("login", null, { owner: true }));
+      $("#ownerSignupBtn").addEventListener("click", () => openGate("signup", null, { owner: true }));
+    } else if (state.user.role === "owner") {
+      box.innerHTML = '<button class="btn primary wide" id="ownerPostBtn">Post a property</button>';
+      $("#ownerPostBtn").addEventListener("click", openPost);
+    } else {
+      box.innerHTML = '<p class="muted small">This account is a renter account. Log out and sign up as an owner to post a home.</p>';
+    }
+  }
   async function logout() {
     await api("/api/auth/logout", {});
-    state.user = null; state.credits = 0; updateAccount();
+    state.user = null; state.credits = 0; setPass({ active: false, days_left: 0, plans: state.plans }); updateAccount();
+    loadListings().then(() => refresh({ fit: false }));
     if (state.selectedId) { const l = state.listings.find((x) => x.id === state.selectedId); if (l && !$("#detailView").hidden) renderCallBox(l); }
     toast("Logged out.");
   }
@@ -659,7 +811,7 @@
       try {
         const s = await api("/api/payu/status?txnid=" + encodeURIComponent(txnid));
         if (s.kind === "listing") toast("Paid. Your listing is waiting for admin approval before it goes live.", 4200);
-        else if (s.kind === "pass") { await refreshMe(); toast("Weekly Pass active for " + PASS_DAYS + " days. Owner numbers and photos are unlocked.", 4200); if (state.selectedId) { const sel = state.listings.find((x) => x.id === state.selectedId); if (sel) openDetail(sel); } }
+        else if (s.kind === "pass") { await refreshMe(); await loadListings(); refresh({ fit: false }); toast("Pass active. Full zoom, prices and owner numbers are unlocked.", 4200); if (state.selectedId) { const sel = state.listings.find((x) => x.id === state.selectedId); if (sel) openDetail(sel); } }
         else toast("Payment received.", 3200);
       } catch (e) { toast("Payment received. Refresh to see your balance.", 3200); }
     } else if (result === "failed") toast("Payment failed or was cancelled. Nothing was charged to your listing or credits.", 4200);
@@ -848,8 +1000,16 @@
     });
   }
   (async function boot() {
+    if (AGENT) {
+      // Owner app: no map, just login/signup and the post flow.
+      document.querySelector("main.layout").hidden = true;
+      document.querySelector("#ownerHome").hidden = false;
+      $("#filters") && ($("#filters").hidden = true);
+      await Promise.all([restoreSession(), handlePayuReturn()]);
+      return;
+    }
     const [, , , spot] = await Promise.all([restoreSession(), handlePayuReturn(), loadListings(), visitorSpot()]);
-    if (spot) map.setView([spot.lat, spot.lng], 12);
+    if (spot) map.setView([spot.lat, spot.lng], Math.min(12, state.freeCap));
     refresh({ fit: !spot });
   })();
 })();

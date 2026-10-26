@@ -12,7 +12,23 @@
   <header class="topbar">
     <div class="brand">Rental<span>Map</span></div>
     <div id="accountArea" class="account"></div>
+    <div class="menu-wrap">
+      <button id="menuBtn" class="icon-btn" aria-label="Menu" aria-haspopup="true" aria-expanded="false" title="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/></svg>
+      </button>
+      <div id="menu" class="menu" hidden role="menu">
+        <a role="menuitem" href="/agent">Own a property? List it</a>
+      </div>
+    </div>
   </header>
+
+  <!-- Owner app (served at /agent): login, signup, post a listing -->
+  <section id="ownerHome" class="owner-home" hidden>
+    <h2>List your property</h2>
+    <p class="muted">For owners only. Brokers and agents are not allowed. Sign up or log in to post a home with photos, a video and the details.</p>
+    <div id="ownerActions" class="owner-actions"></div>
+    <div id="ownerMine"></div>
+  </section>
 
   <div class="finder">
     <div class="searchbar">
@@ -67,9 +83,51 @@
   </div>
 
   <main class="layout">
-    <div id="map" aria-label="Map of rental listings"></div>
+    <div class="map-box">
+      <div id="map" aria-label="Map of rental listings"></div>
+      <!-- Shown when a visitor without a pass tries to zoom past the free cap -->
+      <div id="zoomGate" class="zoom-gate" hidden role="dialog" aria-label="Zoom locked">
+        <div class="zg-card">
+          <div class="zg-t">Paid plan required to zoom in</div>
+          <button class="btn primary" id="zoomGateBtn">Take a weekly pass</button>
+        </div>
+      </div>
+    </div>
     <section id="cardList" class="cards" aria-label="Listings"></section>
+    <!-- Bottom element below the locked map: swipe up or tap to open the pass sheet -->
+    <div id="passBar" class="pass-bar" role="button" tabindex="0" aria-controls="passSheet" aria-expanded="false">
+      <span class="pb-grip" aria-hidden="true"></span>
+      <span class="pb-t">purchase a pass</span>
+      <span class="pb-s" id="passBarSub">unlock full zoom, prices and owner numbers</span>
+    </div>
   </main>
+
+  <!-- Pass sheet: 7-day and 1-year options. Pay appears after one is picked. Google Pay only. -->
+  <div id="passSheet" class="pass-sheet" role="dialog" aria-modal="true" aria-labelledby="passTitle">
+    <div class="ps-inner">
+      <div class="ps-head">
+        <h2 id="passTitle">Weekly pass</h2>
+        <button class="icon-btn" id="passCloseBtn" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <p class="muted small">Unlimited owner contacts with either pass. Passes stack: a new one starts after the current expiry.</p>
+      <div class="plan-list" id="planList">
+        <button class="plan" data-plan="7d" type="button">
+          <span class="pl-name">7 days</span><span class="pl-price" data-price="7d">₹400</span><span class="pl-sub">unlimited contacts</span>
+        </button>
+        <button class="plan" data-plan="1y" type="button">
+          <span class="pl-name">1 year</span><span class="pl-price" data-price="1y">₹900</span><span class="pl-sub">unlimited contacts</span>
+        </button>
+      </div>
+      <div class="pay-method">
+        <label class="radio"><input type="radio" name="payMethod" value="gpay" checked /> Google Pay</label>
+      </div>
+      <button id="passPayBtn" class="btn primary wide" hidden>Pay with Google Pay</button>
+      <button id="passSimBtn" class="btn ghost wide" hidden>Payment successful (test mode)</button>
+      <p id="passStatus" class="muted small"></p>
+    </div>
+  </div>
 
   <!-- Listing details: full sheet -->
   <div id="detailView" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="detailTitle">
@@ -110,7 +168,7 @@
     </div>
   </div>
 
-  <!-- Buy credits (renters) -->
+  <!-- Buy credits (renters): kept for the existing call-credit route; not shown in the pass flow -->
   <div id="creditsView" class="sheet" hidden role="dialog" aria-modal="true">
     <div class="sheet-bar">
       <button class="icon-btn" data-close="creditsView" aria-label="Close">

@@ -239,6 +239,74 @@ const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000
     const auDenied = await call("GET", "/api/admin/users", undefined, pCookie);
     ok("admin users list refused for renter", auDenied.status === 403, auDenied.status);
 
+    // ---- tenant-first funnel (new): routes, zoom cap, pass sheet, order per plan, unlock, relock ----
+    const home = await fetch(BASE + "/");
+    const homeHtml = await home.text();
+    ok("/ serves the tenant page", home.status === 200 && homeHtml.includes("id=\"map\"") && !homeHtml.includes("<body class=\"agent\">"), homeHtml.slice(0, 80));
+    ok("/ has no List property button", !homeHtml.includes("List property") || !homeHtml.includes("id=\"listBtn\""), null);
+    ok("/ menu links to /agent (kebab menu)", homeHtml.includes("href=\"/agent\"") && homeHtml.includes("id=\"menuBtn\""), null);
+    ok("/ has the bottom pass bar and pass sheet", homeHtml.includes("purchase a pass") && homeHtml.includes("id=\"passSheet\""), null);
+    const agent = await fetch(BASE + "/agent");
+    const agentHtml = await agent.text();
+    ok("/agent serves the owner page", agent.status === 200 && agentHtml.includes("<body class=\"agent\">") && agentHtml.includes("id=\"ownerHome\""), agentHtml.slice(0, 80));
+    ok("/agent has no tenant map as the main view", agentHtml.includes("id=\"ownerHome\""), null);
+
+    // Free view: listings carry no price, title or details.
+    const freeList = await call("GET", "/api/listings");
+    const fl0 = freeList.json.listings[0];
+    ok("free view: listings are locked dots (no rent, title, photos)", !!fl0 && fl0.locked === true && fl0.rent === undefined && fl0.title === undefined && fl0.photos === undefined, fl0);
+    ok("free view: server reports the zoom cap (12)", freeList.json.pass && freeList.json.pass.free_zoom_cap === 12, freeList.json.pass);
+    ok("free view: both plans reported 400 (7d) and 900 (1y)", freeList.json.pass && freeList.json.pass.plans.some((p) => p.id === "7d" && p.price_rupees === 400) && freeList.json.pass.plans.some((p) => p.id === "1y" && p.price_rupees === 900), freeList.json.pass && freeList.json.pass.plans);
+    const jsAll = await (await fetch(BASE + "/app.js")).text();
+    ok("app.js has the zoom gate and pass sheet", jsAll.includes("Paid plan required to zoom in") || jsAll.includes("zoomGate"), null);
+
+    // New renter for the funnel. Pass sheet: order per plan.
+    const fz = await call("POST", "/api/auth/signup", { email: "funnel@test.local", password: "password123", name: "Dev Patel", role: "renter" });
+    const fzCookie = fz.cookie;
+    const bad = await call("POST", "/api/pass/order", { plan: "30d" }, fzCookie);
+    ok("pass order refused for an unknown plan", bad.status === 400, bad);
+    const o7 = await call("POST", "/api/pass/order", { plan: "7d" }, fzCookie);
+    ok("order created for 7-day pass at Rs 400 (40000 paise)", o7.status === 200 && o7.json.amount === 40000 && o7.json.plan === "7d" && o7.json.payment.params.amount === "400.00", o7.json);
+    ok("google pay routing set on pass order (UPI, TEZ)", o7.json.payment && o7.json.payment.params.pg === "UPI" && o7.json.payment.params.bankcode === "TEZ", o7.json.payment && o7.json.payment.params);
+    const o1 = await call("POST", "/api/pass/order", { plan: "1y" }, fzCookie);
+    ok("order created for 1-year pass at Rs 900 (90000 paise)", o1.status === 200 && o1.json.amount === 90000 && o1.json.plan === "1y" && o1.json.payment.params.amount === "900.00", o1.json);
+
+    // Before payment: still locked.
+    const beforePay = await call("GET", "/api/listings/" + f1.id, undefined, fzCookie);
+    ok("unpaid order: detail still locked", beforePay.json.listing.media_locked === true, beforePay.json.listing);
+
+    // Test-mode simulated success on the 1-year order unlocks everything.
+    const sim1 = await call("POST", "/api/payu/simulate", { txnid: o1.json.payment.params.txnid }, fzCookie);
+    ok("simulate success on 1-year order: paid", sim1.status === 200 && sim1.json.status === "paid" && sim1.json.pass.active === true, sim1.json);
+    const sim1Again = await call("POST", "/api/payu/simulate", { txnid: o1.json.payment.params.txnid }, fzCookie);
+    ok("same order cannot be paid twice", sim1Again.status === 409, sim1Again.status);
+    const afterPay = await call("GET", "/api/listings", undefined, fzCookie);
+    const unlockedRow = afterPay.json.listings.find((x) => x.id === f1.id);
+    ok("success unlocks: full listing rows with price for the pass holder", !!unlockedRow && unlockedRow.rent !== undefined && unlockedRow.locked !== true, unlockedRow);
+    const afterDetail = await call("GET", "/api/listings/" + f1.id, undefined, fzCookie);
+    ok("success unlocks: detail carries photos and video", afterDetail.json.listing.media_locked === false && afterDetail.json.listing.photos.length > 0, afterDetail.json.listing);
+    const reveal = await call("POST", "/api/listings/" + f1.id + "/reveal", {}, fzCookie);
+    ok("success unlocks: owner phone revealed", reveal.status === 200 && !!reveal.json.phone, reveal.json);
+
+    // Stacking: a 7-day pass bought during the 1-year pass extends it from the current expiry.
+    const expBefore = Date.parse((await call("GET", "/api/me", undefined, fzCookie)).json.user.pass_expires_at);
+    const sim7 = await call("POST", "/api/payu/simulate", { txnid: o7.json.payment.params.txnid }, fzCookie);
+    const expAfter = Date.parse(sim7.json.pass.expires_at);
+    ok("passes stack: 7-day added on top of the 1-year expiry", sim7.status === 200 && expAfter - expBefore > 6.9 * 86400000 && expAfter - expBefore < 7.1 * 86400000, { expBefore, expAfter });
+
+    // Expiry relocks, server-side.
+    const exp2 = await call("POST", "/api/admin/users/" + fz.json.user.id + "/pass", { expires_at: new Date(Date.now() - 1000).toISOString() }, adm.cookie);
+    ok("expiry: admin sets pass in the past", exp2.status === 200 && exp2.json.pass.active === false, exp2.json);
+    const relock = await call("GET", "/api/listings", undefined, fzCookie);
+    const relockRow = relock.json.listings.find((x) => x.id === f1.id);
+    ok("expiry relocks: listing back to a locked dot", !!relockRow && relockRow.locked === true && relockRow.rent === undefined, relockRow);
+    const relockReveal = await call("POST", "/api/listings/" + f1.id + "/reveal", {}, fzCookie);
+    ok("expiry relocks: reveal refused again", relockReveal.status === 402, relockReveal.status);
+
+    // Test-mode simulate is refused for the live PayU host (checked by its own flag).
+    const meFlag = await call("GET", "/api/listings");
+    ok("pass payload reports test_mode", meFlag.json.pass && meFlag.json.pass.test_mode === true, meFlag.json.pass);
+
     // Price is configurable: PASS_PRICE_RUPEES env sets the price the server reports and charges.
     // (checked in the separate configured run below)
     const appText2 = appText;

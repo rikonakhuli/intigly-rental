@@ -26,7 +26,9 @@
 //   GET  /media/<key>                   stored photo/video
 //   GET  /admin                         admin dashboard (admin.html)
 //
-// Env: PORT, DATA_DIR (db.json + uploads, default ./data), UPLOAD_DIR, PAYU_MERCHANT_KEY,
+// GET /agent: owner app (same page as /, owner mode).
+// Env: PORT, DATA_DIR (db.json + uploads, default ./data), UPLOAD_DIR, PASS_PRICE_RUPEES (7-day pass, default 400),
+// PASS_YEAR_PRICE_RUPEES (1-year pass, default 900), PAYU_MERCHANT_KEY,
 // PAYU_MERCHANT_SALT (server only, never sent to the browser), PAYU_BASE_URL (default test.payu.in;
 // live is secure.payu.in), PUBLIC_BASE_URL (public https origin PayU posts back to), ADMIN_EMAIL +
 // ADMIN_PASSWORD (creates the admin account on boot if missing), NODE_ENV=production (Secure cookie).
@@ -63,6 +65,15 @@ const PASS_PRICE_RUPEES = (() => { const n = Number(process.env.PASS_PRICE_RUPEE
 const PASS_PRICE_PAISE = Math.round(PASS_PRICE_RUPEES * 100);
 const PASS_DAYS = 7;
 const PASS_MS = PASS_DAYS * 86400000;
+// Annual pass (default Rs 900). Same unlimited contacts as the weekly pass.
+const PASS_YEAR_PRICE_RUPEES = (() => { const n = Number(process.env.PASS_YEAR_PRICE_RUPEES); return Number.isFinite(n) && n > 0 ? n : 900; })();
+// Pass plans. 7d = weekly pass (PASS_PRICE_RUPEES), 1y = annual pass. Both unlimited contacts. Passes stack on the current expiry.
+const PASS_PLANS = {
+  "7d": { days: 7, label: "7 days", price_rupees: PASS_PRICE_RUPEES, productinfo: "Weekly Pass" },
+  "1y": { days: 365, label: "1 year", price_rupees: PASS_YEAR_PRICE_RUPEES, productinfo: "Annual Pass" }
+};
+// Zoom cap for visitors without an active pass (Leaflet level, about city level, not street level). The client enforces it from this value.
+const FREE_ZOOM_CAP = 12;
 const MIN_PHOTOS = 3;
 const SESSION_DAYS = 30;
 const BHK_VALUES = ["1RK", "1", "1.5", "2", "2.5", "3", "3.5", "4"];
@@ -159,8 +170,13 @@ function passView(u) {
     active,
     expires_at: active ? u.pass_expires_at : null,
     days_left: active ? Math.ceil((Date.parse(u.pass_expires_at) - Date.now()) / 86400000) : 0,
-    price_rupees: PASS_PRICE_RUPEES, days: PASS_DAYS
+    price_rupees: PASS_PRICE_RUPEES, days: PASS_DAYS,
+    plans: planView(), free_zoom_cap: FREE_ZOOM_CAP, test_mode: payuIsTest()
   };
+}
+const payuIsTest = () => /test\.payu\.in/.test(PAYU_ACTION);
+function planView() {
+  return Object.keys(PASS_PLANS).map((id) => ({ id, label: PASS_PLANS[id].label, days: PASS_PLANS[id].days, price_rupees: PASS_PLANS[id].price_rupees, unlimited_contacts: true }));
 }
 
 // ---------- PayU hosted checkout ----------
@@ -215,7 +231,7 @@ function reviewView(r) {
 }
 function payuBase(req) { return PUBLIC_BASE_URL || ("http://" + (req.headers.host || "localhost")); }
 // Writes the order row and returns the form params the browser POSTs to PayU.
-function createPayuPayment(req, user, kind, ref, amountPaise, quantity, productinfo) {
+function createPayuPayment(req, user, kind, ref, amountPaise, quantity, productinfo, opts) {
   if (!PAYU_KEY || !PAYU_SALT) throw fail(503, "Payments are not set up yet");
   const txnid = "T" + crypto.randomBytes(12).toString("hex").toUpperCase(); // 25 chars, new per attempt
   const base = payuBase(req);
@@ -228,13 +244,39 @@ function createPayuPayment(req, user, kind, ref, amountPaise, quantity, producti
   };
   if (user.phone) p.phone = user.phone;
   p.hash = payuRequestHash(p);
-  db.insert("orders", { id: newId("O"), kind, user_id: user.id, ref: kind === "listing" ? ref : null, quantity,
+  // Payment method routing, not part of the request hash. Pass orders go straight to Google Pay (UPI, bankcode TEZ).
+  const extra = opts || {};
+  if (extra.pg) p.pg = extra.pg;
+  if (extra.bankcode) p.bankcode = extra.bankcode;
+  db.insert("orders", { id: newId("O"), kind, user_id: user.id, ref: kind === "listing" ? ref : null, quantity, plan: extra.plan || null,
     amount: amountPaise, payu_txnid: txnid, status: "created", payu_mihpayid: null, created_at: new Date().toISOString() });
   return { action: PAYU_ACTION, params: p };
 }
-function payuBack(res, state, txnid) {
-  res.writeHead(302, { Location: "/?payu=" + state + (txnid ? "&txnid=" + encodeURIComponent(txnid) : ""), "Cache-Control": "no-store" });
+function payuBack(res, state, txnid, kind) {
+  // Listing payments return to the owner app (/agent). Pass and credit payments return to the home page.
+  const base = kind === "listing" ? "/agent" : "/";
+  res.writeHead(302, { Location: base + "?payu=" + state + (txnid ? "&txnid=" + encodeURIComponent(txnid) : ""), "Cache-Control": "no-store" });
   res.end();
+}
+// Applies a verified successful payment. Used by the PayU callback, and by the test-mode simulate route.
+// Idempotent: a paid order is never applied twice.
+function fulfilOrder(order, mihpayid) {
+  const now = new Date().toISOString();
+  db.transaction((tx) => {
+    const cur = tx.find("orders", (o) => o.id === order.id);
+    if (cur.status === "paid") return;
+    tx.update("orders", (o) => o.id === order.id, { status: "paid", payu_mihpayid: mihpayid, paid_at: now });
+    if (order.kind === "listing") {
+      tx.update("listings", (x) => x.id === order.ref && x.status === "awaiting_payment", { status: "pending_approval", payment_id: mihpayid, paid_at: now });
+    } else if (order.kind === "pass") {
+      // Stacks: a new pass starts from the current expiry if one is still running, so paid days are not lost.
+      const buyer = tx.find("users", (x) => x.id === order.user_id);
+      const base = passActive(buyer) ? Date.parse(buyer.pass_expires_at) : Date.now();
+      tx.update("users", (x) => x.id === order.user_id, { pass_expires_at: new Date(base + (PASS_PLANS[order.plan] || PASS_PLANS["7d"]).days * 86400000).toISOString() });
+    } else {
+      tx.insert("ledger", { id: newId("L"), user_id: order.user_id, delta: order.quantity, reason: "purchase", ref: order.id, created_at: now });
+    }
+  });
 }
 // PayU posts here (surl and furl). The browser may arrive without our session cookie, so trust
 // comes only from the verified hash, the known txnid, our merchant key and the exact amount.
@@ -243,32 +285,16 @@ async function handlePayuCallback(req, res) {
   const txnid = String(f.txnid || "");
   const order = txnid ? db.find("orders", (o) => o.payu_txnid === txnid) : null;
   if (!order) { console.warn("payu callback: unknown txnid"); return payuBack(res, "invalid", null); }
-  if (!payuResponseHashOk(f)) { console.warn("payu callback: hash mismatch, txnid " + txnid); return payuBack(res, "invalid", txnid); }
-  if (String(f.key || "") !== PAYU_KEY) { console.warn("payu callback: merchant key mismatch, txnid " + txnid); return payuBack(res, "invalid", txnid); }
-  if (order.status === "paid") return payuBack(res, "success", txnid);
-  const now = new Date().toISOString();
+  if (!payuResponseHashOk(f)) { console.warn("payu callback: hash mismatch, txnid " + txnid); return payuBack(res, "invalid", txnid, order.kind); }
+  if (String(f.key || "") !== PAYU_KEY) { console.warn("payu callback: merchant key mismatch, txnid " + txnid); return payuBack(res, "invalid", txnid, order.kind); }
+  if (order.status === "paid") return payuBack(res, "success", txnid, order.kind);
   if (String(f.status || "") === "success") {
-    if (Math.round(Number(f.amount) * 100) !== order.amount) { console.warn("payu callback: amount mismatch, txnid " + txnid); return payuBack(res, "invalid", txnid); }
-    const mihpayid = String(f.mihpayid || "") || null;
-    db.transaction((tx) => {
-      const cur = tx.find("orders", (o) => o.id === order.id);
-      if (cur.status === "paid") return;
-      tx.update("orders", (o) => o.id === order.id, { status: "paid", payu_mihpayid: mihpayid, paid_at: now });
-      if (order.kind === "listing") {
-        tx.update("listings", (x) => x.id === order.ref && x.status === "awaiting_payment", { status: "pending_approval", payment_id: mihpayid, paid_at: now });
-      } else if (order.kind === "pass") {
-        // 7 days from payment. If a pass is still running, the new week stacks on the end so paid days are not lost.
-        const buyer = tx.find("users", (x) => x.id === order.user_id);
-        const base = passActive(buyer) ? Date.parse(buyer.pass_expires_at) : Date.now();
-        tx.update("users", (x) => x.id === order.user_id, { pass_expires_at: new Date(base + PASS_MS).toISOString() });
-      } else {
-        tx.insert("ledger", { id: newId("L"), user_id: order.user_id, delta: order.quantity, reason: "purchase", ref: order.id, created_at: now });
-      }
-    });
-    return payuBack(res, "success", txnid);
+    if (Math.round(Number(f.amount) * 100) !== order.amount) { console.warn("payu callback: amount mismatch, txnid " + txnid); return payuBack(res, "invalid", txnid, order.kind); }
+    fulfilOrder(order, String(f.mihpayid || "") || null);
+    return payuBack(res, "success", txnid, order.kind);
   }
   db.update("orders", (o) => o.id === order.id && o.status === "created", { status: "failed" });
-  return payuBack(res, "failed", txnid);
+  return payuBack(res, "failed", txnid, order.kind);
 }
 
 
@@ -362,7 +388,10 @@ async function handleApi(req, res, url) {
   if (m === "GET" && p === "/api/listings") {
     // India-wide: no city gate. The client narrows by map view or distance.
     const rows = db.filter("listings", (l) => l.status === "live" && (SHOW_SAMPLES || l.source !== "seed"));
-    return sendJson(res, 200, { listings: rows.map(publicListing) });
+    const viewer = currentUser(req);
+    // Without an active pass: only id and map position. No price, title, photos or details.
+    const out = passActive(viewer) ? rows.map(publicListing) : rows.map((l) => ({ id: l.id, lat: l.lat, lng: l.lng, locked: true }));
+    return sendJson(res, 200, { listings: out, pass: passView(viewer) });
   }
   if (m === "GET" && parts.length === 3 && parts[1] === "listings") {
     const l = db.find("listings", (x) => x.id === parts[2] && x.status === "live");
@@ -543,8 +572,24 @@ async function handleApi(req, res, url) {
   }
   if (m === "POST" && p === "/api/pass/order") {
     const u = requireUser(req, ["renter"]);
-    const payment = createPayuPayment(req, u, "pass", u.id, PASS_PRICE_PAISE, 1, "Weekly Pass");
-    return sendJson(res, 200, { payment, amount: PASS_PRICE_PAISE, currency: "INR", pass: passView(u) });
+    const b = await readJson(req);
+    const plan = b.plan === undefined ? "7d" : String(b.plan);
+    if (!Object.prototype.hasOwnProperty.call(PASS_PLANS, plan)) throw fail(400, "Pick the 7-day or the 1-year pass");
+    const amount = Math.round(PASS_PLANS[plan].price_rupees * 100);
+    const payment = createPayuPayment(req, u, "pass", u.id, amount, 1, PASS_PLANS[plan].productinfo, { plan, pg: "UPI", bankcode: "TEZ" });
+    return sendJson(res, 200, { payment, amount, currency: "INR", plan, pass: passView(u) });
+  }
+  // Test mode only: marks one of the caller's own created pass orders as paid, through the same fulfilment as the PayU callback.
+  // Refused on the live PayU host.
+  if (m === "POST" && p === "/api/payu/simulate") {
+    const u = requireUser(req, ["renter"]);
+    if (!payuIsTest()) throw fail(404, "Not found");
+    const b = await readJson(req);
+    const o = db.find("orders", (x) => x.payu_txnid === String(b.txnid || "") && x.user_id === u.id);
+    if (!o) throw fail(404, "Unknown payment");
+    if (o.status !== "created") throw fail(409, "This payment is not waiting for payment");
+    fulfilOrder(o, "SIM-" + o.payu_txnid);
+    return sendJson(res, 200, { status: "paid", kind: o.kind, pass: passView(db.find("users", (x) => x.id === u.id)) });
   }
   if (m === "POST" && p === "/api/credits/order") {
     const u = requireUser(req, ["renter"]);
@@ -622,6 +667,14 @@ function serveStatic(res, name) {
   fs.createReadStream(path.join(APP_DIR, name)).pipe(res);
 }
 
+// Same page for / (tenant) and /agent (owner app). /agent gets body.agent, which the CSS and app.js read.
+function serveIndex(res, agent) {
+  let html = fs.readFileSync(path.join(APP_DIR, "index.html"), "utf8");
+  if (agent) html = html.replace("<body>", '<body class="agent">');
+  res.writeHead(200, { "Content-Type": MIME[".html"], "Cache-Control": "no-cache" });
+  res.end(html);
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, "http://localhost");
@@ -634,7 +687,8 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": key.endsWith(".mp4") ? "video/mp4" : key.endsWith(".mov") ? "video/quicktime" : key.endsWith(".webm") ? "video/webm" : "image/jpeg", "Cache-Control": "public, max-age=86400" });
       return stream.pipe(res);
     }
-    if (req.method === "GET" && (p === "/" || p === "/index.html")) return serveStatic(res, "index.html");
+    if (req.method === "GET" && (p === "/" || p === "/index.html")) return serveIndex(res, false);
+    if (req.method === "GET" && (p === "/agent" || p === "/agent/")) return serveIndex(res, true);
     if (req.method === "GET" && (p === "/admin" || p === "/admin/")) {
       res.writeHead(200, { "Content-Type": MIME[".html"] });
       return fs.createReadStream(path.join(APP_DIR, "admin.html")).pipe(res);
